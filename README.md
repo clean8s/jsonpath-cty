@@ -23,6 +23,19 @@ func demo() {
 It's based on [spyzhov/ajson](https://github.com/spyzhov/ajson), by replacing
 `ajson.Node` operations with the corresponding `cty` operations.
 
+You can use all features:
+
+* `$`
+* `$.field`
+* `$.wildcard[*]`
+* `$.x.y..recursive`
+* `["field1", "field2", ...]`
+* `m[1:]`, `slice2[:2]`, `slice3[1:5]`
+* `[?(expr)]`
+* `$.a.items.length`
+
+Scripting outside of filters is not allowed.
+
 ## LICENSE
 
 cty and ajson are licensed under MIT, and are created by:
