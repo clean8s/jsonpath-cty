@@ -1,4 +1,4 @@
-name: Go
+name: Go Test
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
 
 jobs:
 
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
@@ -19,4 +19,4 @@ jobs:
       with:
         go-version: 1.17
     - name: Test
-      run: go test -v ./...
+      run: go mod download && go test -v ./...
