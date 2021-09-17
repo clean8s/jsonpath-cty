@@ -39,6 +39,7 @@ Scripting outside of filters is not allowed.
 ## TODO
 
 * [ ] Make it work with encapsulated types and make sure iteration capability is 1:1 to cty capabilities
+  * proper handling of unary and binary operations with neat checks for unknowns, nils, iterator support
 * [ ] Fuzzing and more test cases
 * [ ] Refactor and document tokenizer
 
