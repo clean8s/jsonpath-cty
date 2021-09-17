@@ -1,5 +1,7 @@
 # JSONPath for the cty Go library
 
+[![Go Test](https://github.com/clean8s/jsonpathcty/actions/workflows/go.yml/badge.svg)](https://github.com/clean8s/jsonpathcty/actions/workflows/go.yml)
+
 `jsonpathcty` lets you iterate over `cty` datastructures using JSONPath syntax.
 
 Note: [cty](https://github.com/zclconf/go-cty/) is the serialization / typesystem library
