@@ -36,6 +36,12 @@ You can use all features:
 
 Scripting outside of filters is not allowed.
 
+## TODO
+
+* [ ] Make it work with encapsulated types and make sure iteration capability is 1:1 to cty capabilities
+* [ ] Fuzzing and more test cases
+* [ ] Refactor and document tokenizer
+
 ## LICENSE
 
 cty and ajson are licensed under MIT, and are created by:
