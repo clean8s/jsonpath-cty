@@ -19,3 +19,12 @@ func demo() {
 
 It's based on [spyzhov/ajson](https://github.com/spyzhov/ajson), by replacing
 `ajson.Node` operations with the corresponding `cty` operations.
+
+## LICENSE
+
+cty and ajson are licensed under MIT, and are created by:
+
+    ajson: Copyright (c) 2019 Pyzhov Stepan
+    cty:   Copyright (c) 2017-2018 Martin Atkins
+
+This library, jsonpath-cty, is licensed under the MIT license.
