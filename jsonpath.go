@@ -219,17 +219,17 @@ func (p *parser) parseDeep() (err error) {
 	switch p.scan() {
 	case scanner.Ident:
 		p.add(func(r, c cty.Value, a actions) (cty.Value, error) {
-			return recSearchParent(r, c, a, searchResults{}), nil
+			return recursiveDescent(r, c, a, true), nil
 		})
 		return p.parseObjAccess()
 	case '[':
 		p.add(func(r, c cty.Value, a actions) (cty.Value, error) {
-			return recSearchParent(r, c, a, searchResults{}), nil
+			return recursiveDescent(r, c, a, true), nil
 		})
 		return p.parseBracket()
 	case '*':
 		p.add(func(r, c cty.Value, a actions) (cty.Value, error) {
-			return recSearchChildren(r, c, a, searchResults{}), nil
+			return recursiveDescent(r, c, a, false), nil
 		})
 		p.add(func(r, c cty.Value, a actions) (cty.Value, error) {
 			return a.next(r, c)
@@ -370,25 +370,24 @@ type resultMark int
 
 var result resultMark = resultMark(1)
 
-func recSearchParent(r, c cty.Value, a actions, acc searchResults) cty.Value {
-	if v, err := a.next(r, c); err == nil {
-		if v.HasMark(result) {
-			v, _ = v.Unmark()
-			acc = append(acc, v.AsValueSlice()...)
-		} else {
-			acc = append(acc, v)
+func recursiveDescent(r, c cty.Value, a actions, iterateChildren bool) cty.Value {
+	var acc searchResults
+	if iterateChildren {
+		if v, err := a.next(r, c); err == nil {
+			if v.HasMark(result) {
+				v, _ = v.Unmark()
+				acc = append(acc, v.AsValueSlice()...)
+			} else {
+				acc = append(acc, v)
+			}
 		}
 	}
-	return recSearchChildren(r, c, a, acc).Mark(result)
-}
-
-func recSearchChildren(r, c cty.Value, a actions, acc searchResults) cty.Value {
 	if c.CanIterateElements() {
 		it := c.ElementIterator()
 		for it.Next() {
 			_, v := it.Element()
-			v, _ = recSearchParent(r, v, a, acc).Unmark()
-			acc = v.AsValueSlice()
+			v, _ = recursiveDescent(r, v, a, true).Unmark()
+			acc = append(acc, v.AsValueSlice()...)
 		}
 	}
 	return cty.TupleVal(acc).Mark(result)
