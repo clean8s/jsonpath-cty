@@ -8,11 +8,15 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
+	"fmt"
 )
 
 var sampleDoc cty.Value
 
-var sample = DemoSample
+func TestPaths(t *testing.T) {
+	val, path, _ := Read("$.A[0]", sampleDoc)
+	fmt.Println(val, path)
+}
 
 func TestParsing(t *testing.T) {
 	t.Run("pick", func(t *testing.T) {
@@ -151,7 +155,7 @@ func TestErrors(t *testing.T) {
 
 func assert(t *testing.T, doc Val, tests map[string]Val) {
 	for path, expected := range tests {
-		actual, err := Read(doc, path)
+		actual, _, err := Read(path, doc)
 		exp, _ := ctyjson.Marshal(expected, expected.Type())
 		act, _ := ctyjson.Marshal(actual, actual.Type())
 		if err != nil {
@@ -164,7 +168,7 @@ func assert(t *testing.T, doc Val, tests map[string]Val) {
 
 func assertError(t *testing.T, doc Val, tests map[string]string) {
 	for path, expectedError := range tests {
-		_, err := Read(doc, path)
+		_, _, err := Read(path, doc)
 		if err == nil {
 			t.Error("path", path, "should fail with", expectedError)
 		} else if !strings.Contains(err.Error(), expectedError) {
@@ -196,7 +200,7 @@ func Tuple(v ...Val) Val {
 }
 
 func TestMain(m *testing.M) {
-	doc2Json, _ := json.Marshal(sample)
+	doc2Json, _ := json.Marshal(DemoSample)
 	jType2, _ := ctyjson.ImpliedType(doc2Json)
 	sampleDoc, _ = ctyjson.Unmarshal(doc2Json, jType2)
 	os.Exit(m.Run())

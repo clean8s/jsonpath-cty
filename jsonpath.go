@@ -9,13 +9,13 @@
 //
 // A jsonpath expression can be prepared to be reused multiple times :
 //
-//    allAuthors, err := jsonpath.Prepare("$..authors")
+//    allAuthors, err := jsonpath.ParsePath("$..authors")
 //    ...
 //    var bookstore cty.Value
 //    err = json.Unmarshal(data, &bookstore)
 //    authors, err := allAuthors(bookstore)
 //
-// The type of the values returned by the `Read` method or `Prepare`
+// The type of the values returned by the `Read` method or `ParsePath`
 // functions depends on the jsonpath expression.
 //
 // Limitations
@@ -34,22 +34,60 @@ import (
 	"text/scanner"
 
 	"github.com/zclconf/go-cty/cty"
+	"bytes"
 )
+type ctyPathRef struct { *cty.Path }
+
+func newCtyPathRef(path cty.Path) ctyPathRef {
+	return ctyPathRef{&path}
+}
+
+func (path ctyPathRef) String() string {
+	var buf bytes.Buffer
+	for _, step := range *path.Path {
+		switch ts := step.(type) {
+		case cty.GetAttrStep:
+			fmt.Fprintf(&buf, ".%s", ts.Name)
+		case cty.IndexStep:
+			buf.WriteByte('[')
+			key := ts.Key
+			keyTy := key.Type()
+			switch {
+			case key.IsNull():
+				buf.WriteString("null")
+			case !key.IsKnown():
+				buf.WriteString("(not yet known)")
+			case keyTy == cty.Number:
+				bf := key.AsBigFloat()
+				buf.WriteString(bf.Text('g', -1))
+			case keyTy == cty.String:
+				buf.WriteString(strconv.Quote(key.AsString()))
+			default:
+				buf.WriteString("...")
+			}
+			buf.WriteByte(']')
+		}
+	}
+	return buf.String()
+}
 
 // Read a path from a decoded JSON array or object ([]cty.Value or map[string]cty.Value)
 // and returns the corresponding value or an error.
 //
 // The returned value type depends on the requested path and the JSON value.
-func Read(value cty.Value, path string) (cty.Value, error) {
+func Read(path string, value cty.Value) (cty.Value, cty.Path, error) {
+	value, _ = cty.Transform(value, func(path cty.Path, value cty.Value) (cty.Value, error) {
+		return value.Mark(newCtyPathRef(path)), nil
+	})
+
 	filter, err := Prepare(path)
 	if err != nil {
-		return cty.NilVal, err
+		return cty.NilVal, cty.Path{}, err
 	}
 	return filter(value)
 }
 
-// Prepare will parse the path and return a filter function that can then be applied to decoded JSON values.
-func Prepare(path string) (FilterFunc, error) {
+func Prepare(path string) (ApplyFunc, error) {
 	p := newScanner(path)
 	if err := p.parse(); err != nil {
 		return nil, err
@@ -57,8 +95,38 @@ func Prepare(path string) (FilterFunc, error) {
 	return p.prepareFilterFunc(), nil
 }
 
-// FilterFunc applies a prepared json path to a JSON decoded value
-type FilterFunc func(cty.Value) (cty.Value, error)
+// ApplyFunc applies a prepared json path to a JSON decoded value
+type ApplyFunc func(cty.Value) (cty.Value, cty.Path, error)
+
+type JSONPath struct {
+	acts actions
+}
+
+func(p *parser) prepareFilterFunc() func (value cty.Value) (cty.Value, cty.Path, error) {
+	actions := p.actions
+	return func(value cty.Value) (cty.Value, cty.Path, error) {
+		result, err := actions.next(value, value)
+		v, pathMarks := result.UnmarkDeepWithPaths()
+		for _, item := range pathMarks {
+			if len(item.Path) != 0 {
+				continue
+			}
+			itemVal, err := item.Path.Apply(v)
+			if err != nil {
+				return cty.Value{}, nil, err
+			}
+			var itemRootPath = newCtyPathRef(cty.Path{})
+			for m, _ := range item.Marks {
+				if pv, ok := m.(ctyPathRef); ok {
+					itemRootPath = pv
+					break
+				}
+			}
+			return itemVal, *itemRootPath.Path, nil
+		}
+		return cty.NilVal, cty.Path{}, err
+	}
+}
 
 // short variables
 // p: the parser context
@@ -92,15 +160,6 @@ type parser struct {
 	scanner scanner.Scanner
 	path    string
 	actions actions
-}
-
-func (p *parser) prepareFilterFunc() FilterFunc {
-	actions := p.actions
-	return func(value cty.Value) (cty.Value, error) {
-		result, err := actions.next(value, value)
-		result, _ = result.UnmarkDeep()
-		return result, err
-	}
 }
 
 func newScanner(path string) *parser {
@@ -191,6 +250,7 @@ func (p *parser) parseObjAccess() error {
 func (p *parser) prepareWildcard() error {
 	p.add(func(r, c cty.Value, a actions) (cty.Value, error) {
 		out := []cty.Value{}
+		c, _ = c.Unmark()
 		if c.CanIterateElements() {
 			iter := c.ElementIterator()
 			for iter.Next() {
@@ -200,7 +260,7 @@ func (p *parser) prepareWildcard() error {
 					continue
 				}
 				if v.HasMark(result) {
-					v, _ = v.Unmark()
+					v, _ := v.Unmark()
 					out = append(out, v.AsValueSlice()...)
 				} else {
 					out = append(out, v)
@@ -219,17 +279,17 @@ func (p *parser) parseDeep() (err error) {
 	switch p.scan() {
 	case scanner.Ident:
 		p.add(func(r, c cty.Value, a actions) (cty.Value, error) {
-			return recursiveDescent(r, c, a, true), nil
+			return recSearchParent(r, c, a, searchResults{}), nil
 		})
 		return p.parseObjAccess()
 	case '[':
 		p.add(func(r, c cty.Value, a actions) (cty.Value, error) {
-			return recursiveDescent(r, c, a, true), nil
+			return recSearchParent(r, c, a, searchResults{}), nil
 		})
 		return p.parseBracket()
 	case '*':
 		p.add(func(r, c cty.Value, a actions) (cty.Value, error) {
-			return recursiveDescent(r, c, a, false), nil
+			return recSearchChildren(r, c, a, searchResults{}), nil
 		})
 		p.add(func(r, c cty.Value, a actions) (cty.Value, error) {
 			return a.next(r, c)
@@ -370,24 +430,26 @@ type resultMark int
 
 var result resultMark = resultMark(1)
 
-func recursiveDescent(r, c cty.Value, a actions, iterateChildren bool) cty.Value {
-	var acc searchResults
-	if iterateChildren {
-		if v, err := a.next(r, c); err == nil {
-			if v.HasMark(result) {
-				v, _ = v.Unmark()
-				acc = append(acc, v.AsValueSlice()...)
-			} else {
-				acc = append(acc, v)
-			}
+func recSearchParent(r, c cty.Value, a actions, acc searchResults) cty.Value {
+	if v, err := a.next(r, c); err == nil {
+		if v.HasMark(result) {
+			v, _ = v.Unmark()
+			acc = append(acc, v.AsValueSlice()...)
+		} else {
+			acc = append(acc, v)
 		}
 	}
+	return recSearchChildren(r, c, a, acc).Mark(result)
+}
+
+func recSearchChildren(r, c cty.Value, a actions, acc searchResults) cty.Value {
+	c, _ = c.Unmark()
 	if c.CanIterateElements() {
 		it := c.ElementIterator()
 		for it.Next() {
 			_, v := it.Element()
-			v, _ = recursiveDescent(r, v, a, true).Unmark()
-			acc = append(acc, v.AsValueSlice()...)
+			v, _ = recSearchParent(r, v, a, acc).Unmark()
+			acc = v.AsValueSlice()
 		}
 	}
 	return cty.TupleVal(acc).Mark(result)
@@ -395,6 +457,7 @@ func recursiveDescent(r, c cty.Value, a actions, iterateChildren bool) cty.Value
 
 func prepareIndex(index cty.Value, column int) actionFunc {
 	return func(r, c cty.Value, a actions) (cty.Value, error) {
+		c, _ = c.Unmark()
 		if c.CanIterateElements() {
 			it := c.ElementIterator()
 			for it.Next() {
@@ -424,19 +487,21 @@ func prepareSlice(indexes []cty.Value, column int) actionFunc {
 			}
 		}
 		idxL, idxR := getInt(indexes[0]), getInt(indexes[1])
-		idxL = negmax(idxL, c.LengthInt())
+		sl, _ := c.Unmark()
+
+		idxL = negmax(idxL, sl.LengthInt())
 		if idxR == 0 {
-			idxR = c.LengthInt()
+			idxR = sl.LengthInt()
 		} else {
-			idxR = negmax(idxR, c.LengthInt())
+			idxR = negmax(idxR, sl.LengthInt())
 		}
 
 		var idxM = 1
 		if len(indexes) == 3 {
 			idxM = getInt(indexes[2])
 		}
-		if c.CanIterateElements() {
-			slice := c.AsValueSlice()
+		if sl.CanIterateElements() {
+			slice := sl.AsValueSlice()
 
 			out := []cty.Value{}
 			if idxM < 0 {
@@ -475,6 +540,7 @@ func prepareSlice(indexes []cty.Value, column int) actionFunc {
 func prepareUnion(indexes []cty.Value, column int) actionFunc {
 	return func(r, c cty.Value, a actions) (cty.Value, error) {
 		output := []cty.Value{}
+		c, _ = c.Unmark()
 		if c.CanIterateElements() {
 			for _, key := range indexes {
 				it := c.ElementIterator()
