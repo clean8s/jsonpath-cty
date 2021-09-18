@@ -8,14 +8,30 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
-	"fmt"
 )
 
 var sampleDoc cty.Value
-
-func TestPaths(t *testing.T) {
-	val, pp, _ := NewPath("$.A[0]").Evaluate(sampleDoc)
-	fmt.Println(val, pp)
+type b = []byte
+func TestReplaceByPath(t *testing.T) {
+	var EXAMPLE_DOC = b(`{"deeply":
+      {"nested":
+        {"document": {"x": 1, "y": 1.5, "z": 2.5}
+        }
+      }
+    }`)
+	docType, _ := ctyjson.ImpliedType(EXAMPLE_DOC)
+	docCty, _ := ctyjson.Unmarshal(EXAMPLE_DOC, docType)
+	doc2, err := ReplaceByPath(docCty, "$..z", cty.Zero)
+	if err != nil {
+		t.Fatal("err != nil", err)
+	}
+	v, _, err2 := NewPath("$..z").Evaluate(doc2)
+	if err2 != nil {
+		t.Fatal("err != nil", err)
+	}
+	if !v.Index(cty.Zero).Equals(cty.Zero).True() {
+		t.Fatal("Replace() didn't change $..z", v.GoString())
+	}
 }
 
 func TestParsing(t *testing.T) {
