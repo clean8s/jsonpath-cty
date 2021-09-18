@@ -14,8 +14,8 @@ import (
 var sampleDoc cty.Value
 
 func TestPaths(t *testing.T) {
-	val, path, _ := Read("$.A[0]", sampleDoc)
-	fmt.Println(val, path)
+	val, pp, _ := NewPath("$.A[0]").Evaluate(sampleDoc)
+	fmt.Println(val, pp)
 }
 
 func TestParsing(t *testing.T) {
@@ -155,7 +155,7 @@ func TestErrors(t *testing.T) {
 
 func assert(t *testing.T, doc Val, tests map[string]Val) {
 	for path, expected := range tests {
-		actual, _, err := Read(path, doc)
+		actual, _, err := NewPath(path).Evaluate(doc)
 		exp, _ := ctyjson.Marshal(expected, expected.Type())
 		act, _ := ctyjson.Marshal(actual, actual.Type())
 		if err != nil {
@@ -168,7 +168,7 @@ func assert(t *testing.T, doc Val, tests map[string]Val) {
 
 func assertError(t *testing.T, doc Val, tests map[string]string) {
 	for path, expectedError := range tests {
-		_, _, err := Read(path, doc)
+		_, _, err := NewPath(path).Evaluate(doc)
 		if err == nil {
 			t.Error("path", path, "should fail with", expectedError)
 		} else if !strings.Contains(err.Error(), expectedError) {
