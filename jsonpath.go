@@ -35,92 +35,115 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 )
+
+// A cty.Path cannot become a Mark because it is not comparable (and cannot be a key).
+// ctyPathRef is a plain pointer which can therefore fit inside a cty Mark.
+//
+// Each cty.Value processed as an immediate or nested child inside a root cty value gets assigned its mark that holds the
+// cty.Path of that value in respect to the root.
 type ctyPathRef struct { *cty.Path }
 
 func newCtyPathRef(path cty.Path) ctyPathRef {
 	return ctyPathRef{&path}
 }
 
+// Creates a JSONPath from a source string
+// which can be used to manipulate with cty data structures.
+//
+// Example:
+//   NewPath("$.servers..racks[0]")
 func NewPath(path string) JSONPath {
 	return JSONPath{path}
 }
 
-func (path JSONPath) Evaluate(value cty.Value) (cty.Value, cty.Path, error) {
+// Replaces nested values inside a cty.Value targeted by a JSON path.
+//
+// Example:
+//   newLargeDoc := ReplaceByPath(largeDoc, "$.x.y", newY)
+//
+// Returns a new (immutable) version of the first argument that has the changes applied.
+func ReplaceByPath(wholeDocument cty.Value, targetPath string, newValue cty.Value) (cty.Value, error){
+	_, target, err := NewPath(targetPath).Evaluate(wholeDocument)
+	if err != nil {
+		return cty.NilVal, err
+	}
+	return cty.Transform(wholeDocument, func(path cty.Path, value cty.Value) (cty.Value, error) {
+		if cty.NewPathSet(target...).Has(path) {
+			return newValue, nil
+		}
+		return value, nil
+	})
+}
+
+// Evaluates a JSON Path on some cty.Value. The returned cty.Value may be a primitive or a tuple containing
+// many different matches (depending on the operators used).
+//
+// The second return value is a slice of paths which should point to the matched values.
+//
+// If the result is a primitive you should expect:
+//   len(paths) == 1
+//   assuming "$.x", path[0] == Path{Index('x')}
+// If the result is multiple-valued, it'll get stored as a cty.Tuple and you should expect:
+//   resTuple.Length() == len(paths)
+//   assuming $["x","y"], paths[0] == Path{Index('x')} && paths[1] == Path{Index('y')}
+func (path JSONPath) Evaluate(value cty.Value) (cty.Value, []cty.Path, error) {
 	value, _ = cty.Transform(value, func(path cty.Path, value cty.Value) (cty.Value, error) {
 		return value.Mark(newCtyPathRef(path)), nil
 	})
 
 	p := newScanner(path.source)
 	if err := p.parse(); err != nil {
-		return cty.NilVal, cty.Path{}, err
+		return cty.NilVal, nil, err
 	}
 
 	actions := p.actions
 	result, err := actions.next(value, value)
+	if err != nil {
+		return cty.NilVal, nil, err
+	}
 	v, pathMarks := result.UnmarkDeepWithPaths()
+	paths := []cty.Path{}
+	var globalP *cty.Path
 	for _, item := range pathMarks {
-		if len(item.Path) != 0 {
-			continue
-		}
-		itemVal, err := item.Path.Apply(v)
-		if err != nil {
-			return cty.Value{}, nil, err
-		}
-		var itemRootPath = newCtyPathRef(cty.Path{})
 		for m, _ := range item.Marks {
 			if pv, ok := m.(ctyPathRef); ok {
-				itemRootPath = pv
-				break
+				_, err := item.Path.Apply(v)
+				if err != nil {
+					continue
+				}
+				if len(item.Path) == 0 {
+					globalP = pv.Path
+				}
+				if len(item.Path) == 1 {
+					paths = append(paths, *pv.Path)
+				}
 			}
 		}
-		return itemVal, *itemRootPath.Path, nil
 	}
-	return cty.NilVal, cty.Path{}, err
+	if len(paths) > 0 {
+		return v, paths, nil
+	}
+	if globalP != nil {
+		return v, []cty.Path{*globalP}, nil
+	}
+	return v, nil, nil
 }
 
-// ApplyFunc applies a prepared json path to a JSON decoded value
-type ApplyFunc func(cty.Value) (cty.Value, cty.Path, error)
-
+// JSONPath holds the source of a JSON path and provides
+// the methods for manipulating with cty.Value by JSON paths.
 type JSONPath struct {
 	source string
 }
 
-func(p *parser) prepareFilterFunc() func (value cty.Value) (cty.Value, cty.Path, error) {
-	actions := p.actions
-	return func(value cty.Value) (cty.Value, cty.Path, error) {
-		result, err := actions.next(value, value)
-		v, pathMarks := result.UnmarkDeepWithPaths()
-		for _, item := range pathMarks {
-			if len(item.Path) != 0 {
-				continue
-			}
-			itemVal, err := item.Path.Apply(v)
-			if err != nil {
-				return cty.Value{}, nil, err
-			}
-			var itemRootPath = newCtyPathRef(cty.Path{})
-			for m, _ := range item.Marks {
-				if pv, ok := m.(ctyPathRef); ok {
-					itemRootPath = pv
-					break
-				}
-			}
-			return itemVal, *itemRootPath.Path, nil
-		}
-		return cty.NilVal, cty.Path{}, err
-	}
-}
-
-// short variables
-// p: the parser context
-// r: root node => @
-// c: current node => $
-// a: the list of actions to apply next
-// v: value
+// an iteratorMark is a special type used to Mark() values
+// that are produced by a JSONPath construct rather than actual user provided cty.Value
+// for example, "$.x..recursive" emits a tuple of all values in '$.x', but such tuple is not 'naturally' present inside the JSON
+type iteratorMarkType string
+var iteratorMark iteratorMarkType = iteratorMarkType("iterable.container")
 
 // actionFunc applies a transformation to current value (possibility using root)
 // then applies the next action from actions (using next()) to the output of the transformation
-type actionFunc func(r, c cty.Value, a actions) (cty.Value, error)
+type actionFunc func(root, current cty.Value, actions actions) (cty.Value, error)
 
 // a list of action functions to apply one after the other
 type actions []actionFunc
@@ -206,10 +229,12 @@ func (p *parser) parsePath() (err error) {
 	return
 }
 
+// handles "$.attr": a plain attribute access.
 func (p *parser) parseObjAccess() error {
 	ident := p.text()
 	column := p.scanner.Position.Column
 	p.add(func(r, c cty.Value, a actions) (cty.Value, error) {
+		c, _ = c.Unmark()
 		if c.Type().IsObjectType() {
 			if !c.Type().HasAttribute(ident) {
 				return cty.NilVal, fmt.Errorf("attribute '%s' doesn't exist at %d", ident, column)
@@ -230,6 +255,7 @@ func (p *parser) parseObjAccess() error {
 	return nil
 }
 
+// handles ".*": the wildcard operator. it matches all immediate children of an array/object.
 func (p *parser) prepareWildcard() error {
 	p.add(func(r, c cty.Value, a actions) (cty.Value, error) {
 		out := []cty.Value{}
@@ -242,7 +268,7 @@ func (p *parser) prepareWildcard() error {
 				if err != nil {
 					continue
 				}
-				if v.HasMark(result) {
+				if v.HasMark(iteratorMark) {
 					v, _ := v.Unmark()
 					out = append(out, v.AsValueSlice()...)
 				} else {
@@ -252,11 +278,12 @@ func (p *parser) prepareWildcard() error {
 		} else {
 			return cty.NilVal, fmt.Errorf("cannot iterate %s", c.GoString())
 		}
-		return cty.TupleVal(out).Mark(result), nil
+		return cty.TupleVal(out).Mark(iteratorMark), nil
 	})
 	return nil
 }
 
+// handles deep/recursive scans with the ".." syntax
 func (p *parser) parseDeep() (err error) {
 	p.scanner.Mode = scanner.ScanIdents
 	switch p.scan() {
@@ -409,20 +436,16 @@ func (p *parser) parseExpression() (exprFunc, error) {
 	return nil, errors.New("Expression are not (yet) implemented")
 }
 
-type resultMark int
-
-var result resultMark = resultMark(1)
-
 func recSearchParent(r, c cty.Value, a actions, acc searchResults) cty.Value {
 	if v, err := a.next(r, c); err == nil {
-		if v.HasMark(result) {
+		if v.HasMark(iteratorMark) {
 			v, _ = v.Unmark()
 			acc = append(acc, v.AsValueSlice()...)
 		} else {
 			acc = append(acc, v)
 		}
 	}
-	return recSearchChildren(r, c, a, acc).Mark(result)
+	return recSearchChildren(r, c, a, acc).Mark(iteratorMark)
 }
 
 func recSearchChildren(r, c cty.Value, a actions, acc searchResults) cty.Value {
@@ -435,9 +458,10 @@ func recSearchChildren(r, c cty.Value, a actions, acc searchResults) cty.Value {
 			acc = v.AsValueSlice()
 		}
 	}
-	return cty.TupleVal(acc).Mark(result)
+	return cty.TupleVal(acc).Mark(iteratorMark)
 }
 
+// handles "[x]" operator for indexing where x is a Number.
 func prepareIndex(index cty.Value, column int) actionFunc {
 	return func(r, c cty.Value, a actions) (cty.Value, error) {
 		c, _ = c.Unmark()
@@ -457,43 +481,57 @@ func prepareIndex(index cty.Value, column int) actionFunc {
 
 var ctyOne = cty.NumberIntVal(1)
 
+// converts a cty.Value to an untyped int.
 func getInt(v cty.Value) int {
-	i6, _ := v.AsBigFloat().Int64()
-	return int(i6)
+	ctyInt64, _ := v.AsBigFloat().Int64()
+	return int(ctyInt64)
 }
 
+// handles slice syntax "[low : high : increment]" which is an extension of the index operator.
+// supports negative indexing.
 func prepareSlice(indexes []cty.Value, column int) actionFunc {
 	return func(r, c cty.Value, a actions) (cty.Value, error) {
 		for _, v := range indexes {
+			// make sure indexes has Numbers only
 			if len(v.Type().TestConformance(cty.Number)) != 0 {
 				return cty.NilVal, fmt.Errorf("not a number: %s", v.GoString())
 			}
 		}
+		// slices should look like [idxL : idxR : increment]
 		idxL, idxR := getInt(indexes[0]), getInt(indexes[1])
-		sl, _ := c.Unmark()
 
-		idxL = negmax(idxL, sl.LengthInt())
+		// all marks must be removed before iterating a slice.
+		slice, _ := c.Unmark()
+
+		// support negative values
+		idxL = negmax(idxL, slice.LengthInt())
 		if idxR == 0 {
-			idxR = sl.LengthInt()
+			idxR = slice.LengthInt()
 		} else {
-			idxR = negmax(idxR, sl.LengthInt())
+			idxR = negmax(idxR, slice.LengthInt())
 		}
 
-		var idxM = 1
+		// increment is "+1" by default, unless there's a third argument.
+		var increment = 1
 		if len(indexes) == 3 {
-			idxM = getInt(indexes[2])
+			increment = getInt(indexes[2])
 		}
-		if sl.CanIterateElements() {
-			slice := sl.AsValueSlice()
+
+		if slice.CanIterateElements() {
+			slice := slice.AsValueSlice()
 
 			out := []cty.Value{}
-			if idxM < 0 {
-				for i := idxR - 1; i >= idxL; i += idxM {
+			if increment < 0 {
+
+				// negative increments need a reverse loop
+				// instead of [low, high) you need to start at (high - 1), down to (low)
+
+				for i := idxR - 1; i >= idxL; i += increment {
 					v, err := a.next(r, slice[i])
 					if err != nil {
 						continue
 					}
-					if v.HasMark(result) {
+					if v.HasMark(iteratorMark) {
 						v, _ = v.Unmark()
 						out = append(out, v.AsValueSlice()...)
 					} else {
@@ -501,12 +539,12 @@ func prepareSlice(indexes []cty.Value, column int) actionFunc {
 					}
 				}
 			} else {
-				for i := idxL; i < idxR; i += idxM {
+				for i := idxL; i < idxR; i += increment {
 					v, err := a.next(r, slice[i])
 					if err != nil {
 						continue
 					}
-					if v.HasMark(result) {
+					if v.HasMark(iteratorMark) {
 						v, _ = v.Unmark()
 						out = append(out, v.AsValueSlice()...)
 					} else {
@@ -514,12 +552,14 @@ func prepareSlice(indexes []cty.Value, column int) actionFunc {
 					}
 				}
 			}
-			return cty.TupleVal(out).Mark(result), nil
+			return cty.TupleVal(out).Mark(iteratorMark), nil
 		}
 		return cty.NilVal, fmt.Errorf("cannot iterate %s", c.GoString())
 	}
 }
 
+// a union merges the elements of two objects
+// this handles the feature $["x", "y", "z", ...]
 func prepareUnion(indexes []cty.Value, column int) actionFunc {
 	return func(r, c cty.Value, a actions) (cty.Value, error) {
 		output := []cty.Value{}
@@ -536,7 +576,7 @@ func prepareUnion(indexes []cty.Value, column int) actionFunc {
 					if err != nil {
 						return cty.NilVal, err
 					}
-					if v.HasMark(result) {
+					if v.HasMark(iteratorMark) {
 						v, _ = v.Unmark()
 						output = append(output, v.AsValueSlice()...)
 					} else {
@@ -544,13 +584,9 @@ func prepareUnion(indexes []cty.Value, column int) actionFunc {
 					}
 				}
 			}
-			return cty.TupleVal(output).Mark(result), nil
+			return cty.TupleVal(output).Mark(iteratorMark), nil
 		}
 		return cty.NilVal, fmt.Errorf("not iterable: %s", c.GoString())
-		// if len(output) == 1 {
-		// 	return output[0], nil
-		// }
-		// return cty.TupleVal(output), nil
 	}
 }
 
