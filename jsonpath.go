@@ -34,7 +34,6 @@ import (
 	"text/scanner"
 
 	"github.com/zclconf/go-cty/cty"
-	"bytes"
 )
 type ctyPathRef struct { *cty.Path }
 
@@ -42,64 +41,48 @@ func newCtyPathRef(path cty.Path) ctyPathRef {
 	return ctyPathRef{&path}
 }
 
-func (path ctyPathRef) String() string {
-	var buf bytes.Buffer
-	for _, step := range *path.Path {
-		switch ts := step.(type) {
-		case cty.GetAttrStep:
-			fmt.Fprintf(&buf, ".%s", ts.Name)
-		case cty.IndexStep:
-			buf.WriteByte('[')
-			key := ts.Key
-			keyTy := key.Type()
-			switch {
-			case key.IsNull():
-				buf.WriteString("null")
-			case !key.IsKnown():
-				buf.WriteString("(not yet known)")
-			case keyTy == cty.Number:
-				bf := key.AsBigFloat()
-				buf.WriteString(bf.Text('g', -1))
-			case keyTy == cty.String:
-				buf.WriteString(strconv.Quote(key.AsString()))
-			default:
-				buf.WriteString("...")
-			}
-			buf.WriteByte(']')
-		}
-	}
-	return buf.String()
+func NewPath(path string) JSONPath {
+	return JSONPath{path}
 }
 
-// Read a path from a decoded JSON array or object ([]cty.Value or map[string]cty.Value)
-// and returns the corresponding value or an error.
-//
-// The returned value type depends on the requested path and the JSON value.
-func Read(path string, value cty.Value) (cty.Value, cty.Path, error) {
+func (path JSONPath) Evaluate(value cty.Value) (cty.Value, cty.Path, error) {
 	value, _ = cty.Transform(value, func(path cty.Path, value cty.Value) (cty.Value, error) {
 		return value.Mark(newCtyPathRef(path)), nil
 	})
 
-	filter, err := Prepare(path)
-	if err != nil {
+	p := newScanner(path.source)
+	if err := p.parse(); err != nil {
 		return cty.NilVal, cty.Path{}, err
 	}
-	return filter(value)
-}
 
-func Prepare(path string) (ApplyFunc, error) {
-	p := newScanner(path)
-	if err := p.parse(); err != nil {
-		return nil, err
+	actions := p.actions
+	result, err := actions.next(value, value)
+	v, pathMarks := result.UnmarkDeepWithPaths()
+	for _, item := range pathMarks {
+		if len(item.Path) != 0 {
+			continue
+		}
+		itemVal, err := item.Path.Apply(v)
+		if err != nil {
+			return cty.Value{}, nil, err
+		}
+		var itemRootPath = newCtyPathRef(cty.Path{})
+		for m, _ := range item.Marks {
+			if pv, ok := m.(ctyPathRef); ok {
+				itemRootPath = pv
+				break
+			}
+		}
+		return itemVal, *itemRootPath.Path, nil
 	}
-	return p.prepareFilterFunc(), nil
+	return cty.NilVal, cty.Path{}, err
 }
 
 // ApplyFunc applies a prepared json path to a JSON decoded value
 type ApplyFunc func(cty.Value) (cty.Value, cty.Path, error)
 
 type JSONPath struct {
-	acts actions
+	source string
 }
 
 func(p *parser) prepareFilterFunc() func (value cty.Value) (cty.Value, cty.Path, error) {
