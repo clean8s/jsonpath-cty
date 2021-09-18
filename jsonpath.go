@@ -34,6 +34,7 @@ import (
 	"text/scanner"
 
 	"github.com/zclconf/go-cty/cty"
+	"reflect"
 )
 
 // A cty.Path cannot become a Mark because it is not comparable (and cannot be a key).
@@ -45,6 +46,64 @@ type ctyPathRef struct { *cty.Path }
 
 func newCtyPathRef(path cty.Path) ctyPathRef {
 	return ctyPathRef{&path}
+}
+
+type Wrapper struct {
+	baseVal cty.Value
+	path cty.Path
+}
+
+var WrapperType cty.Type
+var WrapperVal = func(value cty.Value, path cty.Path) cty.Value {
+	return cty.CapsuleVal(WrapperType, &Wrapper{value, path})
+}
+
+func init() {
+	WrapperType = cty.CapsuleWithOps("Wrapper", reflect.TypeOf(Wrapper{}), &cty.CapsuleOps{
+		GoString: func(val interface{}) string {
+			return val.(*Wrapper).baseVal.GoString()
+		},
+		TypeGoString: func(goTy reflect.Type) string {
+			return "Wrapper"
+		},
+		Equals: func(a, b interface{}) cty.Value {
+			at, ok := a.(*Wrapper)
+			bt, ok2 :=  b.(*Wrapper)
+			if ok && ok2 {
+				return at.baseVal.Equals(bt.baseVal)
+			}
+			return cty.False
+		},
+		RawEquals: func(a, b interface{}) bool {
+			at, ok := a.(*Wrapper)
+			bt, ok2 :=  b.(*Wrapper)
+			if ok && ok2 {
+				return at.baseVal.Equals(bt.baseVal).True()
+			}
+			return false
+		},
+		ConversionFrom: nil,
+		ConversionTo:   nil,
+		ExtensionData:  nil,
+	})
+}
+
+func GetWrapper(value cty.Value) *Wrapper {
+	if value.Type().Equals(WrapperType) {
+		w, ok := value.EncapsulatedValue().(*Wrapper)
+		if ok {
+			return w
+		}
+	}
+	return nil
+}
+
+func MaybeGet(value cty.Value) cty.Value {
+	w := GetWrapper(value)
+	if w != nil {
+		return w.baseVal
+	}
+	return value
 }
 
 // Creates a JSONPath from a source string
@@ -75,6 +134,18 @@ func ReplaceByPath(wholeDocument cty.Value, targetPath string, newValue cty.Valu
 	})
 }
 
+func T(v cty.Value, paths *[]cty.Path) (cty.Value) {
+	v, _ = cty.Transform(v, func(path cty.Path, value cty.Value) (cty.Value, error) {
+		g := GetWrapper(value)
+		if g != nil {
+			*paths = append(*paths, g.path)
+			return T(g.baseVal, paths), nil
+		}
+		return value, nil
+	})
+	return v
+}
+
 // Evaluates a JSON Path on some cty.Value. The returned cty.Value may be a primitive or a tuple containing
 // many different matches (depending on the operators used).
 //
@@ -88,7 +159,7 @@ func ReplaceByPath(wholeDocument cty.Value, targetPath string, newValue cty.Valu
 //   assuming $["x","y"], paths[0] == Path{Index('x')} && paths[1] == Path{Index('y')}
 func (path JSONPath) Evaluate(value cty.Value) (cty.Value, []cty.Path, error) {
 	value, _ = cty.Transform(value, func(path cty.Path, value cty.Value) (cty.Value, error) {
-		return value.Mark(newCtyPathRef(path)), nil
+		return WrapperVal(value, path), nil
 	})
 
 	p := newScanner(path.source)
@@ -102,7 +173,10 @@ func (path JSONPath) Evaluate(value cty.Value) (cty.Value, []cty.Path, error) {
 		return cty.NilVal, nil, err
 	}
 	v, pathMarks := result.UnmarkDeepWithPaths()
-	paths := []cty.Path{}
+	var paths = []cty.Path{}
+	v = T(v, &paths)
+	return v, paths, err
+	//paths := []cty.Path{}
 	var globalP *cty.Path
 	for _, item := range pathMarks {
 		for m, _ := range item.Marks {
@@ -150,7 +224,7 @@ type actions []actionFunc
 
 // next applies the next action function
 func (a actions) next(r, c cty.Value) (cty.Value, error) {
-	return a[0](r, c, a[1:])
+	return a[0](r, MaybeGet(c), a[1:])
 }
 
 // call applies the next action function without taking it out
@@ -240,14 +314,14 @@ func (p *parser) parseObjAccess() error {
 				return cty.NilVal, fmt.Errorf("attribute '%s' doesn't exist at %d", ident, column)
 			}
 			attr := c.GetAttr(ident)
-			return a.next(r, attr)
+			return a.next(r, MaybeGet(attr))
 		}
 		if c.CanIterateElements() {
 			identCty := cty.StringVal(ident)
 			if !c.HasIndex(identCty).True() {
 				return cty.NilVal, fmt.Errorf("attribute '%s' doesn't exist at %d", ident, column)
 			}
-			attr := c.Index(identCty)
+			attr := MaybeGet(c.Index(identCty))
 			return a.next(r, attr)
 		}
 		return cty.NilVal, fmt.Errorf("not supporting attributes at %d", column)
@@ -438,6 +512,7 @@ func (p *parser) parseExpression() (exprFunc, error) {
 
 func recSearchParent(r, c cty.Value, a actions, acc searchResults) cty.Value {
 	if v, err := a.next(r, c); err == nil {
+		v = MaybeGet(v)
 		if v.HasMark(iteratorMark) {
 			v, _ = v.Unmark()
 			acc = append(acc, v.AsValueSlice()...)
@@ -449,7 +524,10 @@ func recSearchParent(r, c cty.Value, a actions, acc searchResults) cty.Value {
 }
 
 func recSearchChildren(r, c cty.Value, a actions, acc searchResults) cty.Value {
-	c, _ = c.Unmark()
+	if c.HasMark(iteratorMark) {
+		c, _ = c.Unmark()
+	}
+	c = MaybeGet(c)
 	if c.CanIterateElements() {
 		it := c.ElementIterator()
 		for it.Next() {
@@ -465,6 +543,7 @@ func recSearchChildren(r, c cty.Value, a actions, acc searchResults) cty.Value {
 func prepareIndex(index cty.Value, column int) actionFunc {
 	return func(r, c cty.Value, a actions) (cty.Value, error) {
 		c, _ = c.Unmark()
+		c = MaybeGet(c)
 		if c.CanIterateElements() {
 			it := c.ElementIterator()
 			for it.Next() {
@@ -502,6 +581,7 @@ func prepareSlice(indexes []cty.Value, column int) actionFunc {
 
 		// all marks must be removed before iterating a slice.
 		slice, _ := c.Unmark()
+		slice = MaybeGet(slice)
 
 		// support negative values
 		idxL = negmax(idxL, slice.LengthInt())
@@ -528,6 +608,7 @@ func prepareSlice(indexes []cty.Value, column int) actionFunc {
 
 				for i := idxR - 1; i >= idxL; i += increment {
 					v, err := a.next(r, slice[i])
+					v = MaybeGet(v)
 					if err != nil {
 						continue
 					}
@@ -541,6 +622,7 @@ func prepareSlice(indexes []cty.Value, column int) actionFunc {
 			} else {
 				for i := idxL; i < idxR; i += increment {
 					v, err := a.next(r, slice[i])
+					v = MaybeGet(v)
 					if err != nil {
 						continue
 					}
@@ -564,11 +646,13 @@ func prepareUnion(indexes []cty.Value, column int) actionFunc {
 	return func(r, c cty.Value, a actions) (cty.Value, error) {
 		output := []cty.Value{}
 		c, _ = c.Unmark()
+		c = MaybeGet(c)
 		if c.CanIterateElements() {
 			for _, key := range indexes {
 				it := c.ElementIterator()
 				for it.Next() {
 					k, v := it.Element()
+					v = MaybeGet(v)
 					if !k.Equals(key).True() {
 						continue
 					}
