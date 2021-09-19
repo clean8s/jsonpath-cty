@@ -86,6 +86,16 @@ func (s SearchResult) String() (out string) {
 	return
 }
 
+// EvalRaw is like Eval() without extra processing (cty.Path and unmarking)
+func (j *JSONPath) EvalRaw(data cty.Value) ([][]cty.Value, error) {
+	data, _ = cty.Transform(data, func(path cty.Path, value cty.Value) (cty.Value, error) {
+		return value.Mark(newPathRef(path)), nil
+	})
+	res, err := j.fullEvaluate(data)
+	return res, err
+}
+
+// Returns a list of matched lists and paths based on a JSON path.
 func (j *JSONPath) Eval(data cty.Value) ([]cty.Value, []cty.Path, error) {
 	data, _ = cty.Transform(data, func(path cty.Path, value cty.Value) (cty.Value, error) {
 		return value.Mark(newPathRef(path)), nil
@@ -106,31 +116,17 @@ func (j *JSONPath) Eval(data cty.Value) ([]cty.Value, []cty.Path, error) {
 				}
 			}
 		}
-		if len(paths) == 0 {
-			for i, _ := range result {
-				result[i], _ = cty.Transform(result[i], func(path cty.Path, value cty.Value) (cty.Value, error) {
-					value, marks := value.Unmark()
-					otherMarks := make(cty.ValueMarks)
-					for mark, _ := range marks {
-						if pr, ok := mark.(markPathRef); ok {
-							P := *(pr.path)
-							paths = append(paths, P)
-						} else {
-							otherMarks[mark] = struct{}{}
-						}
-					}
-					value = value.WithMarks(otherMarks)
-					return value, nil
-				})
-			}
+
+		for i, _ := range result {
+			result[i], _ = result[i].UnmarkDeep()
 		}
+
 		filteredPaths := []cty.Path{}
 		for _, path := range paths {
 			outcome, _ := path.Apply(unmarkedData)
 			put := false
 			for _, item := range result {
-				unmarkedItem, _ := item.UnmarkDeep()
-				if unmarkedItem.Equals(outcome).True() {
+				if item.Equals(outcome).True() {
 					put = true
 					break
 				}
@@ -139,7 +135,8 @@ func (j *JSONPath) Eval(data cty.Value) ([]cty.Value, []cty.Path, error) {
 				filteredPaths = append(filteredPaths, path)
 			}
 		}
-		return res[0], filteredPaths, err
+
+		return result, filteredPaths, err
 	}
 	return nil, nil, fmt.Errorf("expected len(nodes) = 1, shouldn't happen unless internal error.")
 }
