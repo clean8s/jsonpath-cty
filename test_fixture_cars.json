@@ -1,0 +1,30 @@
+{
+  "carOwners":{
+    "A":{
+      "has":[
+        "Honda Accord",
+        "VW Up",
+        "Porsche 911"
+      ],
+      "name":"Don Knuth"
+    },
+    "B":{
+      "has":[
+        "Renault Clio",
+        "Jaguar F-Type",
+        "Dodge Viper"
+      ],
+      "name":"Francois Touis"
+    }
+  },
+  "cars":[
+    {
+      "model":"Clio",
+      "name":"Renault",
+      "has":[
+        "4 doors"
+      ]
+    }
+  ]
+}
+}

@@ -34,6 +34,7 @@ import (
 	"text/scanner"
 
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/json"
 )
 
 // A cty.Path cannot become a Mark because it is not comparable (and cannot be a key).
@@ -106,14 +107,17 @@ type ValueContainer struct {
 	flatten bool
 }
 
-func (v ValueContainer) String() string {
-	out := ""
-	//out = spew.Sdump(v.Paths, v.Values)
+func (v ValueContainer) String() (out string) {
+	defer func() {out = fmt.Sprintf("[\n%s\n]\n", strings.TrimRight(out, ",\n"))}()
+
 	for i, item := range v.Values {
 		item, _ = item.UnmarkDeep()
-		out += fmt.Sprintln(FormatCtyPath(v.Paths[i]), " --> ", item.GoString())
+		J := json.SimpleJSONValue{item}
+		docJson, _ := J.MarshalJSON()
+		out += fmt.Sprintf("{%#v: %s},\n", FormatCtyPath(v.Paths[i]), string(docJson))
 	}
-	return out
+
+	return
 }
 
 func (v ValueContainer) AsCty() cty.Value {
@@ -426,6 +430,7 @@ func (p *parser) parseArray() error {
 	Num := func(num int) cty.Value {
 		return cty.NumberIntVal(int64(num))
 	}
+
 	var indexes []cty.Value // string, int or exprFunc
 	var mode string         // slice or union
 	p.scanner.Mode = scanner.ScanIdents | scanner.ScanStrings | scanner.ScanInts
