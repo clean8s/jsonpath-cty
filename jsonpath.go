@@ -48,7 +48,10 @@ func newPathRefMark(path cty.Path) pathRefMark {
 	return pathRefMark{p}
 }
 
-type PathStep func (val cty.Value) (indices []cty.Value, flatten bool)
+type PathStep struct {
+	GetIndices func (val cty.Value) (indices []cty.Value)
+	Flatten bool
+}
 
 // Creates a JSONPath from a source string
 // which can be used to manipulate with cty data structures.
@@ -105,6 +108,7 @@ type ValueContainer struct {
 
 func (v ValueContainer) String() string {
 	out := ""
+	//out = spew.Sdump(v.Paths, v.Values)
 	for i, item := range v.Values {
 		item, _ = item.UnmarkDeep()
 		out += fmt.Sprintln(FormatCtyPath(v.Paths[i]), " --> ", item.GoString())
@@ -143,8 +147,8 @@ func (path JSONPath) Evaluate(value cty.Value) (ValueContainer, error) {
 	V.Values = []cty.Value{value}
 	V.Paths = []cty.Path{cty.Path{}}
 	V.flatten = true
-	for i, item := range result {
-		if item == nil {
+	for _, item := range result {
+		if item.GetIndices == nil {
 			//
 			// Handle recursive result
 			//
@@ -152,26 +156,15 @@ func (path JSONPath) Evaluate(value cty.Value) (ValueContainer, error) {
 			res := []cty.Value{}
 			paths := []cty.Path{}
 			var ferr error
-			for i, val := range V.Values {
-				vPath := V.Paths[i]
+			for ii, val := range V.Values {
+				vPath := V.Paths[ii].Copy()
 				ferr = cty.Walk(val, func(path cty.Path, value cty.Value) (bool, error) {
 					paths = append(paths, append(vPath, (path.Copy())...))
 					res = append(res, value)
 					return true, nil
 				})
 			}
-			//ferr := cty.Walk(cty.TupleVal(V.Values), func(path cty.Path, value cty.Value) (bool, error) {
-			//	if len(path) == 0 {
-			//
-			//	} else {
-			//		i := path[0].(cty.IndexStep)
-			//		idx, _ := i.Key.AsBigFloat().Int64()
-			//		V.Paths[idx]
-			//	}
-			//	paths = append(paths, GetPathFromMark(value))
-			//	res = append(res, value)
-			//	return true, nil
-			//})
+
 			if ferr == nil {
 				V = ValueContainer{
 					Values:  res,
@@ -187,7 +180,9 @@ func (path JSONPath) Evaluate(value cty.Value) (ValueContainer, error) {
 		} else {
 			inputVal = cty.TupleVal(V.Values)
 		}
-		indices, flatten := item(inputVal)
+		//indices, flatten := item(inputVal)
+		indices := item.GetIndices(inputVal)
+		flatten := item.Flatten
 		res := []cty.Value{}
 		paths := []cty.Path{}
 		for _, keyCty := range indices {
@@ -196,18 +191,18 @@ func (path JSONPath) Evaluate(value cty.Value) (ValueContainer, error) {
 				if ferr == nil {
 					res = append(res, valueCty)
 					step, _ := makeStep(inputVal, keyCty)
-					paths = append(paths, append(V.Paths[i], step...))
+					paths = append(paths, append(V.Paths[0].Copy(), step...))
 				}
 			} else {
 				isList := inputVal.Type().IsTupleType() || inputVal.Type().IsListType()
 				if isList && !keyCty.Type().Equals(cty.Number) {
 					flatten = false
 					VUnmarked, _ := inputVal.Unmark()
-					for listI, child := range VUnmarked.AsValueSlice() {
+					for irec, child := range VUnmarked.AsValueSlice() {
 						valueCty, ferr := makeStepVal(child, keyCty)
 						if ferr == nil {
-							step, _ := makeStep(inputVal, keyCty)
-							paths = append(paths, append(V.Paths[i].IndexInt(listI), step...))
+							step, _ := makeStep(child, keyCty)
+							paths = append(paths, append(V.Paths[irec].Copy(), step...))
 							res = append(res, valueCty)
 						}
 					}
@@ -216,7 +211,7 @@ func (path JSONPath) Evaluate(value cty.Value) (ValueContainer, error) {
 					if ferr == nil {
 						res = append(res, valueCty)
 						step, _ := makeStep(inputVal, keyCty)
-						paths = append(paths, append(V.Paths[i], step...))
+						paths = append(paths, append(V.Paths[0].Copy(), step...))
 					}
 				}
 			}
@@ -337,18 +332,23 @@ func (p *parser) parseObjAccess() error {
 	_ = column
 	p.add(func(r, c []PathStep, a actions) ([]PathStep, error) {
 		idx := cty.StringVal(ident)
-		obj := func(value cty.Value) ([]cty.Value, bool) {
-			return []cty.Value{idx}, true
+
+		access := func(value cty.Value) ([]cty.Value) {
+			return []cty.Value{idx}
 		}
-		return a.next(r, append(c, obj))
+		return a.next(r, append(c, 	PathStep{
+			GetIndices: access,
+			Flatten:    true,
+		}))
 	})
 	return nil
 }
 
+
 // handles ".*": the wildcard operator. it matches all immediate children of an array/object.
 func (p *parser) prepareWildcard() error {
 	p.add(func(r, c []PathStep, a actions) ([]PathStep, error) {
-		obj := func(value cty.Value) ([]cty.Value, bool) {
+		obj := func(value cty.Value) ([]cty.Value) {
 			unmarked, _ := value.Unmark()
 			it := unmarked.ElementIterator()
 			keys := []cty.Value{}
@@ -356,9 +356,12 @@ func (p *parser) prepareWildcard() error {
 				key, _ := it.Element()
 				keys = append(keys, key)
 			}
-			return keys, false
+			return keys
 		}
-		return a.next(r, append(c, obj))
+		return a.next(r, append(c, PathStep{
+			GetIndices: obj,
+			Flatten:    false,
+		}))
 	})
 	return nil
 }
@@ -366,7 +369,10 @@ func (p *parser) prepareWildcard() error {
 // handles deep/recursive scans with the ".." syntax
 func (p *parser) parseDeep() (err error) {
 	Novar := (func(r, c []PathStep, a actions) ([]PathStep, error) {
-		return a.next(r, append(c, nil))
+		return a.next(r, append(c, PathStep{
+			GetIndices: nil,
+			Flatten:    false,
+		}))
 	})
 	p.scanner.Mode = scanner.ScanIdents
 	switch p.scan() {
@@ -387,9 +393,9 @@ func (p *parser) parseDeep() (err error) {
 		//	return recSearchChildren(r, c, a, searchResults{}), nil
 		//})
 		p.add(Novar)
-		p.add(func(r, c []PathStep, a actions) ([]PathStep, error) {
-			return a.next(r, c)
-		})
+		//p.add(func(r, c []PathStep, a actions) ([]PathStep, error) {
+		//	return a.next(r, c)
+		//})
 		return nil
 	case scanner.EOF:
 		return fmt.Errorf("cannot end with a scan '..' at %d", p.column())
@@ -554,10 +560,14 @@ func (p *parser) parseExpression() (exprFunc, error) {
 // handles "[x]" operator for indexing where x is a Number.
 func prepareIndex(index cty.Value, column int) actionFunc {
 	return func(r, c []PathStep, a actions) ([]PathStep, error) {
-		obj := func(value cty.Value) ([]cty.Value, bool) {
-			return []cty.Value{index}, true
+		getIdx := func(value cty.Value) ([]cty.Value) {
+			return []cty.Value{index}
 		}
-		return a.next(r, append(c, obj))
+
+		return a.next(r, append(c, PathStep{
+			GetIndices: getIdx,
+			Flatten:    true,
+		}))
 	}
 }
 
@@ -579,7 +589,7 @@ func prepareSlice(indexes []cty.Value, column int) actionFunc {
 				return nil, fmt.Errorf("not a number: %s", v.GoString())
 			}
 		}
-		makeSlice := func(value cty.Value) (idx []cty.Value, flatten bool) {
+		makeSlice := func(value cty.Value) (idx []cty.Value) {
 			ret := make([]cty.Value, 0)
 
 			// slices should look like [idxL : idxR : increment]
@@ -617,9 +627,12 @@ func prepareSlice(indexes []cty.Value, column int) actionFunc {
 					}
 				}
 			}
-			return ret, false
+			return ret
 		}
-		return a.next(r, append(c, makeSlice))
+		return a.next(r, append(c, PathStep{
+			GetIndices: makeSlice,
+			Flatten:    false,
+		}))
 	}
 }
 
@@ -627,10 +640,13 @@ func prepareSlice(indexes []cty.Value, column int) actionFunc {
 // this handles the feature $["x", "y", "z", ...]
 func prepareUnion(indexes []cty.Value, column int) actionFunc {
 	return func(r, c []PathStep, a actions) ([]PathStep, error) {
-		obj := func(value cty.Value) ([]cty.Value, bool) {
-			return indexes, false
+		union := func(value cty.Value) ([]cty.Value) {
+			return indexes
 		}
-		return a.next(c, append(c, obj))
+		return a.next(c, append(c, PathStep{
+			GetIndices: union,
+			Flatten:    false,
+		}))
 	}
 }
 
