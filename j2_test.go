@@ -20,6 +20,6 @@ var testSampleDocVal = ctyjson.SimpleJSONValue{}
 
 func TestFormatCtyPath(t *testing.T) {
 	testSampleDocVal.UnmarshalJSON(testSampleDoc)
-	res, _, err := NewPath(`$["A","D"].C`).Evaluate(testSampleDocVal.Value)
-	fmt.Println(res.GoString(), err)
+	res, err := NewPath(`$..C`).Evaluate(testSampleDocVal.Value)
+	fmt.Println(res, err)
 }

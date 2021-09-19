@@ -8,33 +8,28 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
-	"github.com/davecgh/go-spew/spew"
+	"fmt"
 )
 
 var sampleDoc cty.Value
 type b = []byte
 func TestReplaceByPath(t *testing.T) {
-	var EXAMPLE_DOC = b(`{"deeply":
-     {"nested":
-       {"document": {"x": 1, "y": 1.5, "z": 2.5}
-       }
-     }
-    }`)
-	docType, _ := ctyjson.ImpliedType(EXAMPLE_DOC)
-	docCty, _ := ctyjson.Unmarshal(EXAMPLE_DOC, docType)
-	q, p, _ := NewPath("$..x").Evaluate(docCty)
-	spew.Dump(q, p)
-	//doc2, err := ReplaceByPath(docCty, "$..z", cty.Zero)
-	//if err != nil {
-	//	t.Fatal("err != nil", err)
-	//}
-	//v, _, err2 := NewPath("$..z").Evaluate(doc2)
-	//if err2 != nil {
-	//	t.Fatal("err != nil", err)
-	//}
-	//if !v.Index(cty.Zero).Equals(cty.Zero).True() {
-	//	t.Fatal("Replace() didn't change $..z", v.GoString())
-	//}
+	var EXAMPLE_DOC = b(`{"deeply":{"nested":{"document": {"x": 1, "y": 1.5, "z": 2.5}}}}`)
+	var WANTED_DOC = b(`{"deeply":{"nested":{"document":{"x":0,"y":0,"z":0}}}}`)
+
+	exampleCty := ctyjson.SimpleJSONValue{}
+	exampleCty.UnmarshalJSON(EXAMPLE_DOC)
+
+	ff, _ := NewPath(`$.deeply.nested.document["x", "y"]`).Evaluate(exampleCty.Value)
+	fmt.Println(ff)
+	example2, err := ReplaceByPath(exampleCty.Value, `$..["x","y","z"]`, cty.Zero)
+	if err != nil {
+		t.Fatal("err != nil", err)
+	}
+	out, _ := ctyjson.SimpleJSONValue{example2}.MarshalJSON()
+	if string(out) != string(WANTED_DOC) {
+		t.Fatal("Replace failed:", string(out))
+	}
 }
 
 func TestParsing(t *testing.T) {
@@ -174,7 +169,8 @@ func TestErrors(t *testing.T) {
 
 func assert(t *testing.T, doc Val, tests map[string]Val) {
 	for path, expected := range tests {
-		actual, _, err := NewPath(path).Evaluate(doc)
+		actualT, err := NewPath(path).Evaluate(doc)
+		actual := actualT.AsCty()
 		exp, _ := ctyjson.Marshal(expected, expected.Type())
 		act, _ := ctyjson.Marshal(actual, actual.Type())
 		if err != nil {
@@ -187,7 +183,7 @@ func assert(t *testing.T, doc Val, tests map[string]Val) {
 
 func assertError(t *testing.T, doc Val, tests map[string]string) {
 	for path, expectedError := range tests {
-		_, _, err := NewPath(path).Evaluate(doc)
+		_, err := NewPath(path).Evaluate(doc)
 		if err == nil {
 			t.Error("path", path, "should fail with", expectedError)
 		} else if !strings.Contains(err.Error(), expectedError) {
