@@ -1,53 +1,51 @@
-# JSONPath for the cty Go library
+# JSONPath for go-cty: peekty
 
 [![Go Test](https://github.com/clean8s/jsonpathcty/actions/workflows/go.yml/badge.svg)](https://github.com/clean8s/jsonpathcty/actions/workflows/go.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/clean8s/jsonpathcty.svg)](https://pkg.go.dev/github.com/clean8s/jsonpathcty)
 
-`jsonpathcty` lets you iterate over `cty` datastructures using JSONPath syntax.
+**peekcty** lets you iterate over `cty` datastructures using JSONPath syntax.
 
-Note: [cty](https://github.com/zclconf/go-cty/) is the serialization / typesystem library
+Note: [go-cty](https://github.com/zclconf/go-cty/) is the serialization / typesystem library
 for Go powering HCL, Terraform, zclconf.
 
 ## Example
 
+Given `text_fixture_cars.json`:
 ```go
-import "github.com/clean8s/jsonpathcty"
+import "github.com/clean8s/peekcty"
 
 func demo() {
-  name := jsonpathcty.MustNewPath("$.Name").Apply(someObj)
+  p, err := peekcty.NewPath("$..has")
+  fmt.Println(p.Search(carExample))
 }
+```
+
+Prints:
+```
+".carOwners.A.has" => []{StringVal("Honda Accord"), StringVal("VW Up"), StringVal("Porsche 911")}
+".carOwners.B.has" => []{StringVal("Renault Clio"), StringVal("Jaguar F-Type"), StringVal("Dodge Viper")}
+".cars[0].has" => []{StringVal("4 doors")}
 ```
 
 ## Implementation
 
-It's based on [spyzhov/ajson](https://github.com/spyzhov/ajson), by replacing
-`ajson.Node` operations with the corresponding `cty` operations.
+It's based on Kubernetes/`kubectl`'s implementation
+[here](https://github.com/kubernetes/client-go/blob/cc7616029c18572e01973d10efe5391e3140c050/util/jsonpath/jsonpath.go#L44).
+With two differences:
+* it doesn't require templates or `range` blocks
+* it operates on `cty.Value` instead of `reflect.Value`
 
-You can use all features:
 
-* `$`
+You can use all features except for filters:
+
+* `$[0, 1]`
 * `$.field`
 * `$.wildcard[*]`
 * `$.x.y..recursive`
-* `["field1", "field2", ...]`
 * `m[1:]`, `slice2[:2]`, `slice3[1:5]`
-* `[?(expr)]`
-* `$.a.items.length`
-
-Scripting outside of filters is not allowed.
-
-## TODO
-
-* [ ] Make it work with encapsulated types and make sure iteration capability is 1:1 to cty capabilities
-  * proper handling of unary and binary operations with neat checks for unknowns, nils, iterator support
-* [ ] Fuzzing and more test cases
-* [ ] Refactor and document tokenizer
 
 ## LICENSE
 
-cty and ajson are licensed under MIT, and are created by:
+Licensed under MIT.
 
-    ajson: Copyright (c) 2019 Pyzhov Stepan
-    cty:   Copyright (c) 2017-2018 Martin Atkins
-
-This library, jsonpath-cty, is licensed under the MIT license.
+This is an extension not officially affiliated with the `cty` library by Martin Atkins.
