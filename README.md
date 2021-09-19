@@ -1,4 +1,4 @@
-# JSONPath for go-cty: peekty
+# JSONPath for go-cty: peekcty
 
 [![Go Test](https://github.com/clean8s/peekcty/actions/workflows/go.yml/badge.svg)](https://github.com/peekcty/jsonpathcty/actions/workflows/go.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/clean8s/peekcty.svg)](https://pkg.go.dev/github.com/clean8s/peekcty)
