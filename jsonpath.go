@@ -44,7 +44,8 @@ import (
 type pathRefMark struct { *cty.Path }
 
 func newPathRefMark(path cty.Path) pathRefMark {
-	return pathRefMark{&path}
+	p := DeepCopyPath(path)
+	return pathRefMark{p}
 }
 
 type PathStep func (val cty.Value) (indices []cty.Value, flatten bool)
@@ -65,27 +66,57 @@ func NewPath(path string) JSONPath {
 //
 // Returns a new (immutable) version of the first argument that has the changes applied.
 func ReplaceByPath(wholeDocument cty.Value, targetPath string, newValue cty.Value) (cty.Value, error){
-	_, target, err := NewPath(targetPath).Evaluate(wholeDocument)
+	vp, err := NewPath(targetPath).Evaluate(wholeDocument)
 	if err != nil {
-		return cty.NilVal, err
+		return cty.NilVal, nil
 	}
 	return cty.Transform(wholeDocument, func(path cty.Path, value cty.Value) (cty.Value, error) {
-		if cty.NewPathSet(target...).Has(path) {
+		if cty.NewPathSet(vp.Paths...).Has(path) {
 			return newValue, nil
 		}
 		return value, nil
 	})
 }
 
-func getIndex(value cty.Value, index cty.Value) (cty.Value, error) {
+func makeStep(value cty.Value, index cty.Value) (cty.Path, error) {
 	if value.Type().IsObjectType() {
 		if !index.Type().Equals(cty.String) {
-			return cty.NilVal, fmt.Errorf("object key must be a string")
+			return nil, fmt.Errorf("object key must be a string")
 		}
-		return cty.Path{}.GetAttr(index.AsString()).Apply(value)
+		return cty.Path{}.GetAttr(index.AsString()), nil
 	} else {
-		return cty.Path{}.Index(index).Apply(value)
+		return cty.Path{}.Index(index), nil
 	}
+}
+
+func makeStepVal(value cty.Value, index cty.Value) (cty.Value, error) {
+	p, err := makeStep(value, index)
+	if err != nil {
+		return cty.NilVal, err
+	}
+	return p.Apply(value)
+}
+
+type ValueContainer struct {
+	Values []cty.Value
+	Paths []cty.Path
+	flatten bool
+}
+
+func (v ValueContainer) String() string {
+	out := ""
+	for i, item := range v.Values {
+		item, _ = item.UnmarkDeep()
+		out += fmt.Sprintln(FormatCtyPath(v.Paths[i]), " --> ", item.GoString())
+	}
+	return out
+}
+
+func (v ValueContainer) AsCty() cty.Value {
+	if v.flatten && len(v.Values) == 1 {
+		return v.Values[0]
+	}
+	return cty.TupleVal(v.Values)
 }
 
 // Evaluates a JSON Path on some []PathStep. The returned []PathStep may be a primitive or a tuple containing
@@ -99,110 +130,104 @@ func getIndex(value cty.Value, index cty.Value) (cty.Value, error) {
 // If the result is multiple-valued, it'll get stored as a cty.Tuple and you should expect:
 //   resTuple.Length() == len(paths)
 //   assuming $["x","y"], paths[0] == Path{Index('x')} && paths[1] == Path{Index('y')}
-func (path JSONPath) Evaluate(value cty.Value) (cty.Value, []cty.Path, error) {
-	value, _ = cty.Transform(value, func(path cty.Path, value cty.Value) (cty.Value, error) {
-		return value.Mark(newPathRefMark(path)), nil
-	})
-
-	//
+func (path JSONPath) Evaluate(value cty.Value) (ValueContainer, error) {
 	p := newScanner(path.source)
 	if err := p.parse(); err != nil {
-		return cty.NilVal, nil, err
+		return ValueContainer{}, err
 	}
 	empty := []PathStep{}
 	actions := p.actions
 	result, err := actions.next(empty, empty)
-	var V = value
-	for _, item := range result {
+	//var V = ValueContainer{[]cty.Value{value, }}
+	var V ValueContainer
+	V.Values = []cty.Value{value}
+	V.Paths = []cty.Path{cty.Path{}}
+	V.flatten = true
+	for i, item := range result {
 		if item == nil {
 			//
 			// Handle recursive result
 			//
 
 			res := []cty.Value{}
-			ferr := cty.Walk(V, func(path cty.Path, value cty.Value) (bool, error) {
-				res = append(res, value)
-				return true, nil
-			})
+			paths := []cty.Path{}
+			var ferr error
+			for i, val := range V.Values {
+				vPath := V.Paths[i]
+				ferr = cty.Walk(val, func(path cty.Path, value cty.Value) (bool, error) {
+					paths = append(paths, append(vPath, (path.Copy())...))
+					res = append(res, value)
+					return true, nil
+				})
+			}
+			//ferr := cty.Walk(cty.TupleVal(V.Values), func(path cty.Path, value cty.Value) (bool, error) {
+			//	if len(path) == 0 {
+			//
+			//	} else {
+			//		i := path[0].(cty.IndexStep)
+			//		idx, _ := i.Key.AsBigFloat().Int64()
+			//		V.Paths[idx]
+			//	}
+			//	paths = append(paths, GetPathFromMark(value))
+			//	res = append(res, value)
+			//	return true, nil
+			//})
 			if ferr == nil {
-				V = cty.TupleVal(res)
+				V = ValueContainer{
+					Values:  res,
+					Paths:   paths,
+					flatten: false,
+				}
 			}
 			continue
 		}
-		indices, flatten := item(V)
+		var inputVal = cty.EmptyTupleVal
+		if V.flatten && len(V.Values) == 1{
+			inputVal = V.Values[0]
+		} else {
+			inputVal = cty.TupleVal(V.Values)
+		}
+		indices, flatten := item(inputVal)
 		res := []cty.Value{}
+		paths := []cty.Path{}
 		for _, keyCty := range indices {
-			if V.Type().IsObjectType() {
-				valueCty, ferr := getIndex(V, keyCty)
+			if inputVal.Type().IsObjectType() {
+				valueCty, ferr := makeStepVal(inputVal, keyCty)
 				if ferr == nil {
 					res = append(res, valueCty)
+					step, _ := makeStep(inputVal, keyCty)
+					paths = append(paths, append(V.Paths[i], step...))
 				}
 			} else {
-				isList := V.Type().IsTupleType() || V.Type().IsListType()
+				isList := inputVal.Type().IsTupleType() || inputVal.Type().IsListType()
 				if isList && !keyCty.Type().Equals(cty.Number) {
 					flatten = false
-					VUnmarked, _ := V.Unmark()
-					for _, child := range VUnmarked.AsValueSlice() {
-						valueCty, ferr := getIndex(child, keyCty)
+					VUnmarked, _ := inputVal.Unmark()
+					for listI, child := range VUnmarked.AsValueSlice() {
+						valueCty, ferr := makeStepVal(child, keyCty)
 						if ferr == nil {
+							step, _ := makeStep(inputVal, keyCty)
+							paths = append(paths, append(V.Paths[i].IndexInt(listI), step...))
 							res = append(res, valueCty)
 						}
 					}
 				} else {
-					valueCty, ferr := getIndex(V, keyCty)
+					valueCty, ferr := makeStepVal(inputVal, keyCty)
 					if ferr == nil {
 						res = append(res, valueCty)
+						step, _ := makeStep(inputVal, keyCty)
+						paths = append(paths, append(V.Paths[i], step...))
 					}
 				}
 			}
 		}
-		var listRes = cty.TupleVal(res)
-		if flatten && len(res) == 1 {
-			listRes, _ = cty.Path{}.IndexInt(0).Apply(listRes)
-		}
-		V = listRes
-	}
-	V, marks := V.UnmarkDeep()
-	for mark, _ := range marks {
-		pathMark, ok := mark.(pathRefMark)
-		if ok {
-			fmt.Println(FormatCtyPath(*pathMark.Path))
+		V = ValueContainer{
+			Values:  res,
+			Paths:   paths,
+			flatten: flatten,
 		}
 	}
-	return V, nil, err
-
-	//if err != nil {
-	//	return cty.NilVal, nil, err
-	//}
-	//v, pathMarks := result.UnmarkDeepWithPaths()
-	//var paths = []cty.Path{}
-	//v = T(v, &paths)
-	//return v, paths, err
-	////paths := []cty.Path{}
-	//var globalP *cty.Path
-	//for _, item := range pathMarks {
-	//	for m, _ := range item.Marks {
-	//		if pv, ok := m.(pathRefMark); ok {
-	//			_, err := item.Path.Apply(v)
-	//			if err != nil {
-	//				continue
-	//			}
-	//			if len(item.Path) == 0 {
-	//				globalP = pv.Path
-	//			}
-	//			if len(item.Path) == 1 {
-	//				paths = append(paths, *pv.Path)
-	//			}
-	//		}
-	//	}
-	//}
-	//if len(paths) > 0 {
-	//	return v, paths, nil
-	//}
-	//if globalP != nil {
-	//	return v, []cty.Path{*globalP}, nil
-	//}
-	//return v, nil, nil
+	return V, err
 }
 
 // JSONPath holds the source of a JSON path and provides
