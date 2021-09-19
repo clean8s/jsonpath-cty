@@ -20,8 +20,6 @@ func TestReplaceByPath(t *testing.T) {
 	exampleCty := ctyjson.SimpleJSONValue{}
 	exampleCty.UnmarshalJSON(EXAMPLE_DOC)
 
-	ff, _ := NewPath(`$.deeply.nested.document["x", "y"]`).Evaluate(exampleCty.Value)
-	fmt.Println(ff)
 	example2, err := ReplaceByPath(exampleCty.Value, `$..["x","y","z"]`, cty.Zero)
 	if err != nil {
 		t.Fatal("err != nil", err)
@@ -30,6 +28,12 @@ func TestReplaceByPath(t *testing.T) {
 	if string(out) != string(WANTED_DOC) {
 		t.Fatal("Replace failed:", string(out))
 	}
+
+	var EXAMPLE_DOC2 = b(`{"A": {"B": [ {"C": 3}, {"C": 4} ] } }`)
+	exampleCty = ctyjson.SimpleJSONValue{}
+	exampleCty.UnmarshalJSON(EXAMPLE_DOC2)
+	m, _ := NewPath("$.*.V[1]").Evaluate(sampleDoc)
+	fmt.Println(m)
 }
 
 func TestParsing(t *testing.T) {
