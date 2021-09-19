@@ -1,4 +1,4 @@
-module github.com/clean8s/jsonpathcty
+module github.com/clean8s/peakcty
 
 go 1.17
 
