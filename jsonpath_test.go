@@ -1,4 +1,4 @@
-package peekcty
+package peek
 
 import (
 	"encoding/json"
@@ -9,32 +9,33 @@ import (
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 	_ "embed"
 	"strings"
+	"github.com/clean8s/peekcty/jsonpath"
 )
 
-var sampleDoc cty.Value
+var sampleDoc Value
 
 func TestParsing(t *testing.T) {
 	t.Run("pick", func(t *testing.T) {
-		assert(t, sampleDoc, map[string]Val{
+		assert(t, sampleDoc, map[string]Value{
 			"$":      Tuple(sampleDoc),
 			"$.A[0]": Tuple(Str("string")),
-			"$.A":    Tuple(Tuple(Str("string"), Float(23.3), Num(3), cty.True, cty.False, cty.NilVal)),
-			"$.A[*]": Tuple(Str("string"), Float(23.3), Num(3), cty.True, cty.False, cty.NilVal),
-			"$.A.*":  Tuple(Str("string"), Float(23.3), Num(3), cty.True, cty.False, cty.NilVal),
+			"$.A":    Tuple(Tuple(Str("string"), NumFloat(23.3), Num(3), True, False, Nil)),
+			"$.A[*]": Tuple(Str("string"), NumFloat(23.3), Num(3), True, False, Nil),
+			"$.A.*":  Tuple(Str("string"), NumFloat(23.3), Num(3), True, False, Nil),
 		})
 	})
 
 	t.Run("slice", func(t *testing.T) {
-		assert(t, sampleDoc, map[string]Val{
+		assert(t, sampleDoc, map[string]Value{
 			"$.A[2]":          Tuple(Num(3)),
-			"$.A[1:4]":        Tuple(Float(23.3), Num(3), cty.True),
-			"$.A[::2]":        Tuple(Str("string"), Num(3), cty.False),
-			"$.A[-2:]":        Tuple(cty.False, cty.NilVal),
-			"$.A[:-1]":        Tuple(Str("string"), Float(23.3), Num(3), cty.True, cty.False),
-			"$.F.V[4:5][0,1]": Tuple(Str("string5a"), Str("string5b")),
-			"$.F.V[4:6][0,1]": Tuple(Str("string5a"), Str("string6a"), Str("string5b"), Str("string6b")),
-			"$.F.V[4,5][0:2]": Tuple(Str("string5a"), Str("string5b"), Str("string6a"), Str("string6b")),
-			"$.F.V[4:6]": Tuple(
+			"$.A[1:4]":        Tuple(NumFloat(23.3), Num(3), True),
+			"$.A[::2]":        Tuple(Str("string"), Num(3), False),
+			"$.A[-2:]":        Tuple(False, Nil),
+			"$.A[:-1]":        Tuple(Str("string"), NumFloat(23.3), Num(3), True, False),
+			"$.F.Type[4:5][0,1]": Tuple(Str("string5a"), Str("string5b")),
+			"$.F.Type[4:6][0,1]": Tuple(Str("string5a"), Str("string6a"), Str("string5b"), Str("string6b")),
+			"$.F.Type[4,5][0:2]": Tuple(Str("string5a"), Str("string5b"), Str("string6a"), Str("string6b")),
+			"$.F.Type[4:6]": Tuple(
 				Tuple(
 					Str("string5a"),
 					Str("string5b"),
@@ -48,35 +49,35 @@ func TestParsing(t *testing.T) {
 	})
 
 	t.Run("search", func(t *testing.T) {
-		assert(t, sampleDoc, map[string]Val{
-			"$..C":        Tuple(Float(3.14), Float(3.1415), Float(3.141592), Float(3.14159265)),
-			"$.D.V..C":    Tuple(Float(3.141592)),
-			"$.D.V.*.C":   Tuple(Float(3.141592)),
-			"$.D.*..C":    Tuple(Float(3.141592)),
-			"$.*.V..C":    Tuple(Float(3.141592)),
-			"$.*.D.V.C": Tuple(Float(3.14159265)),
-			"$.*.D..C":    Tuple(Float(3.14159265)),
-			"$.*.D.V...C": Tuple(Float(3.14159265)),
-			"$..D..V..C":  Tuple(Float(3.141592), Float(3.14159265)),
-			"$.*.*.*.C":   Tuple(Float(3.141592), Float(3.14159265)),
-			"$..V..C":     Tuple(Float(3.141592), Float(3.14159265)),
+		assert(t, sampleDoc, map[string]Value{
+			"$..C":        Tuple(NumFloat(3.14), NumFloat(3.1415), NumFloat(3.141592), NumFloat(3.14159265)),
+			"$.D.Type..C":    Tuple(NumFloat(3.141592)),
+			"$.D.Type.*.C":   Tuple(NumFloat(3.141592)),
+			"$.D.*..C":    Tuple(NumFloat(3.141592)),
+			"$.*.Type..C":    Tuple(NumFloat(3.141592)),
+			"$.*.D.Type.C": Tuple(NumFloat(3.14159265)),
+			"$.*.D..C":    Tuple(NumFloat(3.14159265)),
+			"$.*.D.Type...C": Tuple(NumFloat(3.14159265)),
+			"$..D..Type..C":  Tuple(NumFloat(3.141592), NumFloat(3.14159265)),
+			"$.*.*.*.C":   Tuple(NumFloat(3.141592), NumFloat(3.14159265)),
+			"$..Type..C":     Tuple(NumFloat(3.141592), NumFloat(3.14159265)),
 			"$..A": Tuple(
-				Tuple(Str("string"), Float(23.3), Float(3), cty.True, cty.False, cty.NilVal),
+				Tuple(Str("string"), NumFloat(23.3), NumFloat(3), True, False, Nil),
 				Tuple(Str("string3")),
 			),
-			"$..A..":       Tuple(Tuple(Str("string"), Float(23.3), Num(3), cty.True, cty.False, cty.NilVal), Tuple(Str("string3"))),
-			"$.A..":        Tuple(Tuple(Str("string"), Float(23.3), Num(3), cty.True, cty.False, cty.NilVal)),
-			"$.A.*":        Tuple(Str("string"), Float(23.3), Num(3), cty.True, cty.False, cty.NilVal),
+			"$..A..":       Tuple(Tuple(Str("string"), NumFloat(23.3), Num(3), True, False, Nil), Tuple(Str("string3"))),
+			"$.A..":        Tuple(Tuple(Str("string"), NumFloat(23.3), Num(3), True, False, Nil)),
+			"$.A.*":        Tuple(Str("string"), NumFloat(23.3), Num(3), True, False, Nil),
 			"$..A[0]":      Tuple(Str("string"), Str("string3")),
-			"$.*.V[0]":     Tuple(Str("string2a"), Str("string4a")),
-			"$.*.V[1]":     Tuple(Str("string2b"), Str("string4b")),
-			"$.*.V[0,1]":   Tuple(Str("string2a"), Str("string4a"), Str("string2b"), Str("string4b")),
-			"$.*.V[0:2]":   Tuple(Str("string2a"), Str("string2b"), Str("string4a"), Str("string4b")),
-			"$.*.V[2].C":   Tuple(Float(3.141592)),
-			"$..V[*].C":    Tuple(Float(3.141592)),
-			"$..V[*].*": Tuple(
-				Float(3.141592),
-				Float(3.1415926535),
+			"$.*.Type[0]":     Tuple(Str("string2a"), Str("string4a")),
+			"$.*.Type[1]":     Tuple(Str("string2b"), Str("string4b")),
+			"$.*.Type[0,1]":   Tuple(Str("string2a"), Str("string4a"), Str("string2b"), Str("string4b")),
+			"$.*.Type[0:2]":   Tuple(Str("string2a"), Str("string2b"), Str("string4a"), Str("string4b")),
+			"$.*.Type[2].C":   Tuple(NumFloat(3.141592)),
+			"$..Type[*].C":    Tuple(NumFloat(3.141592)),
+			"$..Type[*].*": Tuple(
+				NumFloat(3.141592),
+				NumFloat(3.1415926535),
 				Str("hello"),
 				Str("string5a"),
 				Str("string5b"),
@@ -98,15 +99,15 @@ func TestErrors(t *testing.T) {
 	assertError(t, tests)
 }
 
-func assert(t *testing.T, doc Val, tests map[string]Val) {
+func assert(t *testing.T, doc Value, tests map[string]Value) {
 	for path, expected := range tests {
-		actualT, err := NewPath(path)
+		actualT, err := jsonpath.NewPath(path)
 		if err != nil {
 			t.Fatal("failed parsing", err)
 		}
-		v, _, err := actualT.Eval(doc)
+		v, _, err := actualT.Eval(cty.Value(doc))
 		actual := cty.TupleVal(v)
-		exp, _ := ctyjson.Marshal(expected, expected.Type())
+		exp, _ := expected.MarshalJSON()
 		act, _ := ctyjson.Marshal(actual, actual.Type())
 		if err != nil {
 			t.Error("failed:", path, err)
@@ -118,7 +119,7 @@ func assert(t *testing.T, doc Val, tests map[string]Val) {
 
 func assertError(t *testing.T, tests []string) {
 	for _, path := range tests {
-		_, err := NewPath(path)
+		_, err := jsonpath.NewPath(path)
 		if err == nil {
 			t.Error("path", path, "should fail")
 		}
@@ -126,7 +127,7 @@ func assertError(t *testing.T, tests []string) {
 }
 
 func TestSearch(t *testing.T) {
-	p, _ := NewPath("$.*.*.has")
+	p, _ := jsonpath.NewPath("$.*.*.has")
 	vals, _, _ := p.Eval(carExample.Value)
 	if len(vals) != 3 {
 		t.Fatal("Wrong car example len()", len(vals))
@@ -137,33 +138,12 @@ func TestSearch(t *testing.T) {
 	}
 }
 
-type Val = cty.Value
-
-func Str(S string) Val {
-	return cty.StringVal(S)
-}
-
-func List(v ...Val) Val {
-	return cty.ListVal(v)
-}
-
-func Num(n int) Val {
-	return cty.NumberIntVal(int64(n))
-}
-
-func Float(f float64) Val {
-	return cty.NumberFloatVal(f)
-}
-
-func Tuple(v ...Val) Val {
-	return cty.TupleVal(v)
-}
-
 func TestMain(m *testing.M) {
 	carExample.UnmarshalJSON(carBytes)
 	doc2Json, _ := json.Marshal(DemoSample)
 	jType2, _ := ctyjson.ImpliedType(doc2Json)
-	sampleDoc, _ = ctyjson.Unmarshal(doc2Json, jType2)
+	sampleDocJson, _ := ctyjson.Unmarshal(doc2Json, jType2)
+	sampleDoc = Value(sampleDocJson)
 	os.Exit(m.Run())
 }
 
@@ -184,7 +164,7 @@ var DemoSample = map[string]interface{}{
 	"C": 3.14,
 	"D": map[string]interface{}{
 		"C": 3.1415,
-		"V": []interface{}{
+		"Type": []interface{}{
 			"string2a",
 			"string2b",
 			map[string]interface{}{
@@ -195,13 +175,13 @@ var DemoSample = map[string]interface{}{
 	"E": map[string]interface{}{
 		"A": []interface{}{"string3"},
 		"D": map[string]interface{}{
-			"V": map[string]interface{}{
+			"Type": map[string]interface{}{
 				"C": 3.14159265,
 			},
 		},
 	},
 	"F": map[string]interface{}{
-		"V": []interface{}{
+		"Type": []interface{}{
 			"string4a",
 			"string4b",
 			map[string]interface{}{
