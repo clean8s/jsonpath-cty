@@ -15,15 +15,30 @@ type StructPath struct {
 	FieldNames []string
 }
 
-type TypeTransformer func(t Type, path []Value) Type
+type TypeTransformer func(typ Type, path []Value) (newTyp Type, continueWalk bool)
 
-func Transform(t Type) Type {
+func Transform(t Type, path []Value, transformer TypeTransformer) Type {
+	newType, continueWalk := transformer(t, path)
+	if !continueWalk {
+		return newType
+	} else {
+		t = newType
+	}
+
 	if t.CtyType().IsPrimitiveType() {
-
+		return t
 	} else if t.IsObject() {
-
+		M := t.CtyType().AttributeTypes()
+		for k, v := range M {
+			M[k] = Transform(Type(v), append(path, Str(k)), transformer).CtyType()
+		}
+		return Type(cty.Object(M))
 	} else if t.IsTuple() {
-
+		types := []cty.Type{}
+		for i, item := range t.CtyType().TupleElementTypes() {
+			types = append(types, cty.Type(Transform(Type(item), append(path, Num(i)), transformer)))
+		}
+		return Type(cty.Tuple(types))
 	} else {
 		fn := cty.Set
 		if t.IsSet() {
@@ -37,7 +52,7 @@ func Transform(t Type) Type {
 		}
 
 		el := t.ElementType()
-		fnType := Transform(el).CtyType()
+		fnType := Transform(el, append(path, Unknown), transformer).CtyType()
 		return Type(fn(fnType))
 	}
 	return UnknownType
@@ -63,7 +78,6 @@ func New(gv interface{}) Value {
 		panic(err)
 	}
 	ct, _ := gocty.ToCtyValue(gv, res)
-
 	ct, err = cty.Transform(ct, func(path cty.Path, value cty.Value) (cty.Value, error) {
 		for _, spath := range conv {
 			if path.Equals(spath.Path) {
