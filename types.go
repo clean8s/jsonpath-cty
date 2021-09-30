@@ -8,7 +8,7 @@ import (
 	"github.com/zclconf/go-cty/cty/convert"
 )
 
-type Value cty.Value
+type Val cty.Value
 type Type cty.Type
 
 var ( // Primitives
@@ -18,64 +18,98 @@ var ( // Primitives
 )
 
 var ( // constants
-	True  = Value(cty.True)
-	False = Value(cty.False)
-	Zero  = Value(cty.Zero)
+	True  = Val(cty.True)
+	False = Val(cty.False)
+	Zero  = Val(cty.Zero)
 )
 
-func Num(val int) Value {
-	return Value(cty.NumberIntVal(int64(val)))
+func MergeCollections(val1, val2 Val) {
+
 }
 
-func NumFloat(val float64) Value {
-	return Value(cty.NumberFloatVal(val))
+func (v Val) IsIterable() bool {
+	v = v.Unmark()
+	if v.IsUnknown() || v.IsNil() || v.IsCapsule() {
+		return false
+	}
+	if v.IsPrimitive() {
+		return false
+	}
+	return true
 }
 
-func Str(val string) Value {
-	return Value(cty.StringVal(val))
+func (v Val) IsCapsule() bool {
+	return v.Type().IsCapsule()
 }
 
-func Bool(val bool) Value {
-	return Value(cty.BoolVal(val))
+func (v Val) IsNil() bool {
+	v = v.Unmark()
+	return v.CtyValue().IsNull()
 }
 
-func List(vals ...Value) Value {
-	return Value(cty.ListVal(SliceConvert.ToCty(vals)))
+func (v Val) IsUnknown() bool {
+	v = v.Unmark()
+	return !v.CtyValue().IsKnown()
 }
 
-func Tuple(vals ...Value) Value {
-	return Value(cty.TupleVal(SliceConvert.ToCty(vals)))
+func (v Val) Unmark() Val {
+	cv, _ := v.CtyValue().Unmark()
+	return Val(cv)
 }
 
-func Set(vals ...Value) Value {
-	return Value(cty.SetVal(SliceConvert.ToCty(vals)))
+func Num(val int) Val {
+	return Val(cty.NumberIntVal(int64(val)))
 }
 
-var Nil = Value(cty.NilVal)
-var Unknown = Value(cty.DynamicVal)
+func NumFloat(val float64) Val {
+	return Val(cty.NumberFloatVal(val))
+}
+
+func Str(val string) Val {
+	return Val(cty.StringVal(val))
+}
+
+func Bool(val bool) Val {
+	return Val(cty.BoolVal(val))
+}
+
+func List(vals ...Val) Val {
+	return Val(cty.ListVal(sliceConv.ToCty(vals)))
+}
+
+func Tuple(vals ...Val) Val {
+	return Val(cty.TupleVal(sliceConv.ToCty(vals)))
+}
+
+func Set(vals ...Val) Val {
+	return Val(cty.SetVal(sliceConv.ToCty(vals)))
+}
+
+var Nil = Val(cty.NilVal)
+var Unknown = Val(cty.DynamicVal)
 var UnknownType = Type(cty.DynamicPseudoType)
 
-func (v Value) Hash() int {
+func (v Val) Hash() int {
 	return (v.CtyValue().Hash())
 }
 
-func (v Value) GoString() string {
+func (v Val) GoString() string {
 	return (v.CtyValue().GoString())
 }
 
-func (v Value) Equals(other Value) Value {
-	return Value(v.CtyValue().Equals(cty.Value(other)))
+func (v Val) Equals(other Val) Val {
+	return Val(v.CtyValue().Equals(cty.Value(other)))
 }
 
-func (v Value) NotEqual(other Value) Value {
-	return Value(v.CtyValue().NotEqual(cty.Value(other)))
+func (v Val) NotEqual(other Val) Val {
+	return Val(v.CtyValue().NotEqual(cty.Value(other)))
 }
 
-func (v Value) Type() Type {
+func (v Val) Type() Type {
 	return Type(v.CtyValue().Type())
 }
 
-func (v Value) Is(typ Type) bool {
+func (v Val) Is(typ Type) bool {
 	if v.Type().Equals(cty.Type(typ)) {
 		return true
 	}
@@ -112,31 +146,31 @@ func (v Type) IsSet() bool {
 
 // --
 
-func (v Value) IsList() bool {
+func (v Val) IsList() bool {
 	return v.Type().IsList()
 }
 
-func (v Value) IsMap() bool {
+func (v Val) IsMap() bool {
 	return v.Type().IsMap()
 }
 
-func (v Value) IsSet() bool {
+func (v Val) IsSet() bool {
 	return v.Type().IsSet()
 }
 
-func (v Value) IsTuple() bool {
+func (v Val) IsTuple() bool {
 	return v.Type().IsTuple()
 }
 
-func (v Value) IsPrimitive() bool {
+func (v Val) IsPrimitive() bool {
 	return v.Type().IsPrimitive()
 }
 
-func (v Value) IsObject() bool {
+func (v Val) IsObject() bool {
 	return v.Type().IsObject()
 }
 
-func (v Value) Get(indexOrAttr Value) Value {
+func (v Val) Get(indexOrAttr Val) Val {
 	c, _ := v.CtyValue().Unmark()
 	idx, _ := indexOrAttr.CtyValue().Unmark()
 	//if !c.CanIterateElements() {
@@ -156,15 +190,15 @@ func (v Value) Get(indexOrAttr Value) Value {
 		if !c.Type().HasAttribute(idx.AsString()) {
 			return Unknown
 		}
-		return Value(c.GetAttr(idx.AsString()))
+		return Val(c.GetAttr(idx.AsString()))
 	}
 	if !idx.HasIndex(idx).True() {
 		return Unknown
 	}
-	return Value(idx.Index(idx))
+	return Val(idx.Index(idx))
 }
 
-func (v Value) Children() Children {
+func (v Val) Children() Children {
 	ct, _ := v.CtyValue().Unmark()
 	out := make(Children, 0)
 	if !ct.CanIterateElements() {
@@ -179,8 +213,8 @@ func (v Value) Children() Children {
 	for it.Next() {
 		k, v := it.Element()
 		out = append(out, Child{
-			Key:   Value(k),
-			Value: Value(v),
+			Key:                   Val(k),
+			Value:                 Val(v),
 			KeyRepresentsPosition: keyIsPosition,
 		})
 	}
@@ -188,42 +222,42 @@ func (v Value) Children() Children {
 	return out
 }
 
-func (v Value) Str() string {
+func (v Val) AsString() string {
 	if !v.Is(StrType) {
 		return ""
 	}
 	return v.CtyValue().AsString()
 }
 
-func (v Value) Int() int {
-	return int(v.Int64())
+func (v Val) AsInt() int {
+	return int(v.AsInt64())
 }
 
-func (v Value) Int64() int64 {
+func (v Val) AsInt64() int64 {
 	ret, _ := v.CtyValue().AsBigFloat().Int64()
 	return ret
 }
 
-func (v Value) Float() float64 {
-	ret, _ := v.BigFloat().Float64()
+func (v Val) AsFloat() float64 {
+	ret, _ := v.AsBigFloat().Float64()
 	return ret
 }
 
-func (v Value) BigFloat() *big.Float {
+func (v Val) AsBigFloat() *big.Float {
 	if !v.Is(NumType) {
 		return big.NewFloat(0)
 	}
 	return v.CtyValue().AsBigFloat()
 }
 
-func (v Value) Bool() bool {
+func (v Val) AsBool() bool {
 	if !v.Is(BoolType) {
 		return false
 	}
 	return v.CtyValue().True()
 }
 
-type Child struct { Key Value; Value Value; KeyRepresentsPosition bool }
+type Child struct { Key Val; Value Val; KeyRepresentsPosition bool }
 type Children []Child
 
 func (c Children) UnifiedKeyType() Type {
@@ -250,61 +284,61 @@ func (kv Children) Merge(c Children) Children {
 }
 
 func (kv Children) TryCtyMap() map[string]cty.Value {
-	return MapConvert.ToCty(kv.TryStringMap())
+	return mapConv.ToCty(kv.TryStringMap())
 }
 
-func (kv Children) TryStringMap() map[string]Value {
-	ret := make(map[string]Value)
+func (kv Children) TryStringMap() map[string]Val {
+	ret := make(map[string]Val)
 	for _, item := range kv {
 		if !item.Key.Is(StrType) {
 			continue
 		}
-		ret[item.Key.Str()] = item.Value
+		ret[item.Key.AsString()] = item.Value
 	}
 	return ret
 }
 
-func (v Value) Search(jsonPath string) []Value {
+func (v Val) Search(jsonPath string) []Val {
 	p, err := jsonpath.NewPath(jsonPath)
 	if err != nil {
 		return nil
 	}
-	return SliceConvert.FromCty(p.Search(cty.Value(v)).Values)
+	return sliceConv.FromCty(p.Search(cty.Value(v)).Values)
 }
 
-func (v Value) Len() int {
+func (v Val) Len() int {
 	return v.CtyValue().LengthInt()
 }
 
-func (v Value) MarshalJSON() ([]byte, error) {
+func (v Val) MarshalJSON() ([]byte, error) {
 	s := json.SimpleJSONValue{cty.Value(v)}
 	return s.MarshalJSON()
 }
 
-var SliceConvert = struct {
-	ToCty   func([]Value) []cty.Value
-	FromCty func([]cty.Value) []Value
+var sliceConv = struct {
+	ToCty   func([]Val) []cty.Value
+	FromCty func([]cty.Value) []Val
 }{
-	func(vals []Value) []cty.Value {
+	func(vals []Val) []cty.Value {
 		var result = []cty.Value{}
 		for _, val := range vals {
 			result = append(result, cty.Value(val))
 		}
 		return result
 	},
-	func(vals []cty.Value) []Value {
-		var result = []Value{}
+	func(vals []cty.Value) []Val {
+		var result = []Val{}
 		for _, val := range vals {
-			result = append(result, Value(val))
+			result = append(result, Val(val))
 		}
 		return result
 	},
 }
 
-var MapConvert = struct {
-	ToCty   func(map[string]Value) map[string]cty.Value
+var mapConv = struct {
+	ToCty   func(map[string]Val) map[string]cty.Value
 }{
-	func(vals map[string]Value) map[string]cty.Value {
+	func(vals map[string]Val) map[string]cty.Value {
 		ctyMap := make(map[string]cty.Value)
 		for k, v := range vals {
 			ctyMap[k] = cty.Value(v)

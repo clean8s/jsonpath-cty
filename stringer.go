@@ -12,15 +12,15 @@ func (c Child) String() string {
 	return fmt.Sprintf("Child(key=%s, val=%s)", c.Key, c.Value)
 }
 
-func (v Value) CtyValue() cty.Value {
+func (v Val) CtyValue() cty.Value {
 	return cty.Value(v)
 }
 
-func (v Value) CtyType() cty.Type {
+func (v Val) CtyType() cty.Type {
 	return cty.Type(v.Type())
 }
 
-func (v Value) String() string {
+func (v Val) String() string {
 	return v.stringer("")
 }
 
@@ -53,7 +53,7 @@ func FormatCtyPath(path cty.Path) string {
 	return buf.String()
 }
 
-func (v Value) stringer(prefix string) string {
+func (v Val) stringer(prefix string) string {
 	val, _ := v.CtyValue().UnmarkDeep()
 	if val == cty.NilVal || val.IsNull(){
 		return "nil"
@@ -84,9 +84,9 @@ func (v Value) stringer(prefix string) string {
 				k, v := it.Element()
 				key := ""
 				if val.Type().IsMapType() {
-					key = fmt.Sprintf("%v: ", Value(k).stringer(prefix))
+					key = fmt.Sprintf("%v: ", Val(k).stringer(prefix))
 				}
-				ret = append(ret, fmt.Sprintf("%s%v", key, Value(v).stringer(prefix)))
+				ret = append(ret, fmt.Sprintf("%s%v", key, Val(v).stringer(prefix)))
 			}
 			sepL, sepR := "[", "]"
 			return fmt.Sprintf("%s%s%s", sepL, strings.Join(ret, ", "), sepR)
@@ -96,7 +96,7 @@ func (v Value) stringer(prefix string) string {
 		ret := []string{}
 		for it.Next() {
 			k, v := it.Element()
-			ret = append(ret, fmt.Sprintf("%s%v = %v", prefix + "  ", k.AsString(), Value(v).stringer(prefix + "  ")))
+			ret = append(ret, fmt.Sprintf("%s%v = %v", prefix + "  ", k.AsString(), Val(v).stringer(prefix + "  ")))
 		}
 		return "object(\n" + strings.Join(ret, "\n") + "\n)"
 	}

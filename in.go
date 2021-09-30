@@ -15,9 +15,9 @@ type StructPath struct {
 	FieldNames []string
 }
 
-type TypeTransformer func(typ Type, path []Value) (newTyp Type, continueWalk bool)
+type TypeTransformer func(typ Type, path []Val) (newTyp Type, continueWalk bool)
 
-func Transform(t Type, path []Value, transformer TypeTransformer) Type {
+func Transform(t Type, path []Val, transformer TypeTransformer) Type {
 	newType, continueWalk := transformer(t, path)
 	if !continueWalk {
 		return newType
@@ -66,7 +66,7 @@ func (t Type) ElementType() Type {
 	return Type(t.CtyType().ElementType())
 }
 
-func New(gv interface{}) Value {
+func New(gv interface{}) Val {
 	rt := reflect.TypeOf(gv)
 	var path cty.Path
 	var conv []StructPath = make([]StructPath, 0)
@@ -94,7 +94,7 @@ func New(gv interface{}) Value {
 		}
 		return value, nil
 	})
-	return Value(ct)
+	return Val(ct)
 }
 
 func impliedType(rt reflect.Type, path cty.Path, conv *[]StructPath) (cty.Type, error) {
@@ -145,7 +145,7 @@ func impliedType(rt reflect.Type, path cty.Path, conv *[]StructPath) (cty.Type, 
 
 func impliedStructType(rt reflect.Type, path cty.Path, conv *[]StructPath) (cty.Type, error) {
 	if valueType.AssignableTo(rt) {
-		// Special case: cty.Value represents cty.DynamicPseudoType, for
+		// Special case: cty.Val represents cty.DynamicPseudoType, for
 		// type conformance checking.
 		return cty.DynamicPseudoType, nil
 	}

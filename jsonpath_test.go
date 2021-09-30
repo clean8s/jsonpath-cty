@@ -12,11 +12,11 @@ import (
 	"github.com/clean8s/peekcty/jsonpath"
 )
 
-var sampleDoc Value
+var sampleDoc Val
 
 func TestParsing(t *testing.T) {
 	t.Run("pick", func(t *testing.T) {
-		assert(t, sampleDoc, map[string]Value{
+		assert(t, sampleDoc, map[string]Val{
 			"$":      Tuple(sampleDoc),
 			"$.A[0]": Tuple(Str("string")),
 			"$.A":    Tuple(Tuple(Str("string"), NumFloat(23.3), Num(3), True, False, Nil)),
@@ -26,7 +26,7 @@ func TestParsing(t *testing.T) {
 	})
 
 	t.Run("slice", func(t *testing.T) {
-		assert(t, sampleDoc, map[string]Value{
+		assert(t, sampleDoc, map[string]Val{
 			"$.A[2]":          Tuple(Num(3)),
 			"$.A[1:4]":        Tuple(NumFloat(23.3), Num(3), True),
 			"$.A[::2]":        Tuple(Str("string"), Num(3), False),
@@ -49,7 +49,7 @@ func TestParsing(t *testing.T) {
 	})
 
 	t.Run("search", func(t *testing.T) {
-		assert(t, sampleDoc, map[string]Value{
+		assert(t, sampleDoc, map[string]Val{
 			"$..C":        Tuple(NumFloat(3.14), NumFloat(3.1415), NumFloat(3.141592), NumFloat(3.14159265)),
 			"$.D.Type..C":    Tuple(NumFloat(3.141592)),
 			"$.D.Type.*.C":   Tuple(NumFloat(3.141592)),
@@ -99,7 +99,7 @@ func TestErrors(t *testing.T) {
 	assertError(t, tests)
 }
 
-func assert(t *testing.T, doc Value, tests map[string]Value) {
+func assert(t *testing.T, doc Val, tests map[string]Val) {
 	for path, expected := range tests {
 		actualT, err := jsonpath.NewPath(path)
 		if err != nil {
@@ -143,7 +143,7 @@ func TestMain(m *testing.M) {
 	doc2Json, _ := json.Marshal(DemoSample)
 	jType2, _ := ctyjson.ImpliedType(doc2Json)
 	sampleDocJson, _ := ctyjson.Unmarshal(doc2Json, jType2)
-	sampleDoc = Value(sampleDocJson)
+	sampleDoc = Val(sampleDocJson)
 	os.Exit(m.Run())
 }
 

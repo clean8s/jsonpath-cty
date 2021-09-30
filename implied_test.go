@@ -34,8 +34,8 @@ func TestImpliedStruct(t *testing.T) {
 
 	custom := New(AA{X: 3, Y: 6})
 	fmt.Println(custom, custom.Type())
-	O := NewObjBuilder().Put("A", True).Put("B", Num(3)).Value()
 
+	O := Obj()
 	T := Tuple(Num(3), O)
 	fmt.Println(T)
 	fmt.Println(T.Search("$..A"))
@@ -43,8 +43,8 @@ func TestImpliedStruct(t *testing.T) {
 	for _, item := range T.Children() {
 		fmt.Println(item)
 	}
-	//Type := cty.TupleVal([]cty.Value{cty.NumberIntVal(3), cty.NumberIntVal(5)})
+	//Type := cty.TupleVal([]cty.Val{cty.NumberIntVal(3), cty.NumberIntVal(5)})
 	//VV, _ := gocty.ToCtyValue(A{4, 5}, Type.Type())
-	//fmt.Println(Value(VV))
+	//fmt.Println(Val(VV))
 
 }
