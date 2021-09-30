@@ -1,4 +1,4 @@
-package peekcty
+package jsonpath
 
 import (
 	"github.com/zclconf/go-cty/cty"

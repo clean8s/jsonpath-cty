@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package peekcty
+package jsonpath
 
 import (
 	"fmt"
@@ -23,6 +23,8 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 )
+
+
 
 type JSONPath struct {
 	name       string
